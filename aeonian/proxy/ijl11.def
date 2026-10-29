@@ -1,0 +1,12 @@
+; Aeonian-OpenD2LOD - GPLv3
+; Encaminha as exportacoes do ijl11.dll (Intel JPEG Library) para a copia
+; original, renomeada pelo instalador para ijl11_real.dll. Ordinais e nomes
+; conferem com a DLL original (o Game.exe 1.14d importa 2, 3 e 5).
+LIBRARY ijl11
+EXPORTS
+  ijlGetLibVersion = ijl11_real.ijlGetLibVersion @1
+  ijlInit          = ijl11_real.ijlInit          @2
+  ijlFree          = ijl11_real.ijlFree          @3
+  ijlRead          = ijl11_real.ijlRead          @4
+  ijlWrite         = ijl11_real.ijlWrite         @5
+  ijlErrorStr      = ijl11_real.ijlErrorStr      @6
