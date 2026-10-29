@@ -49,6 +49,16 @@ MANIFEST = "install.json"
 D2GL_FILES = [("glide3x.dll", False, True), ("ddraw.dll", False, True),
               ("d2gl.mpq", True, True), ("d2gl.ini", False, False)]
 D2GL_MARKER = b"d2gl.mpq"
+# SHA-256 dos arquivos dos releases oficiais do D2GL (D2GL.v1.3.3.zip do GitHub
+# do autor). Um build diferente nao e bloqueado, so avisado: na sessao de
+# 2026-10-29 um build nao oficial deixou o jogo preto (so texto HD) no Wine com
+# Mesa (radeonsi e llvmpipe), e o oficial funcionou. Ver docs/modding/D2GL.md.
+D2GL_OFFICIAL = {
+    "glide3x.dll": {"64f9ceb7ae55361dd4e7f339e407b97c4ef27bd40e0f7fc6772c5fda9a4a062f": "v1.3.3"},
+    "ddraw.dll": {"42e5bc69b50e1e15952960a6cd66261c0d0da71c2e89bc8cc0e20ab61fda84b3": "v1.3.3"},
+    "d2gl.mpq": {"8dd68138633ed08e5daaf2ed88c8403e6832afec0d9cc64efa1dac506105a271": "v1.3.3"},
+}
+D2GL_RELEASES_URL = "https://github.com/bayaraa/d2gl/releases"
 
 
 def sha256(path):
@@ -90,6 +100,12 @@ def known_builds():
 def is_d2gl_dll(path):
     with open(path, "rb") as f:
         return D2GL_MARKER in f.read()
+
+
+def d2gl_release(path, name):
+    """Versao do release oficial do D2GL a que o arquivo pertence, ou None."""
+    known = D2GL_OFFICIAL.get(name)
+    return known.get(sha256(path)) if known else None
 
 
 def plan_d2gl(d2gl_dir, game_dir):
@@ -175,6 +191,11 @@ def cmd_install(args):
             d2gl_plan = plan_d2gl(os.path.abspath(args.d2gl_dir), args.game_dir)
         except ValueError as e:
             return fail(str(e))
+        for src, _dst, name, _overwrite in d2gl_plan:
+            if name in D2GL_OFFICIAL and d2gl_release(src, name) is None:
+                print(f"aviso: {name} do D2GL nao e de um release oficial conhecido. Builds nao "
+                      "oficiais deixaram o jogo preto (so o texto HD) no Wine/Mesa; use o "
+                      f"release oficial: {D2GL_RELEASES_URL}")
         have_ddraw = any(n == "ddraw.dll" for _s, _d, n, _o in d2gl_plan)
         if have_ddraw:
             print("aviso: ddraw.dll do D2GL: no Wine/Proton defina WINEDLLOVERRIDES=ddraw=n,b "

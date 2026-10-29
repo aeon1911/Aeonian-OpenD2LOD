@@ -35,12 +35,12 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | Falha segura (build desconhecida, `AEONIAN_DISABLE`) | ✅ | fases B/C da suíte |
 | Símbolos de código do jogo | 🟡 só `Game.EntryPoint` | `addresses/1.14d.ini` |
 | `on_present` (overlay) GDI + D2GL/OpenGL, `request_screenshot`, mods API | ✅ | suíte: quadro do jogo gravado e comparado |
-| Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica; 🟡 imagem completa | [`modding/D2GL.md`](modding/D2GL.md) |
+| Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica e imagem completa com o **release oficial** v1.3.3 (Wine 11.20, RX 9070 XT, 2026-10-29); o instalador avisa se o D2GL não for oficial | [`modding/D2GL.md`](modding/D2GL.md) |
 | Mod de arte visível (botões recoloridos via VFS) | ✅ | diff de 11 mil pixels no menu |
 | Modo DirectDraw (`on_present`) | ⬜ código sem teste | o Wine não o ativou |
 | Estado do jogo (unidades/mapa/personagem) e requisitos do client | ⬜ | M2.2 e "Requisitos do client" no [`ROADMAP.md`](ROADMAP.md) |
 | Windows nativo, Switch/Wine-NX | ⬜ **não testado** | — |
-| Medição de FPS em monitores de alta taxa/4K; D2GL desenhando a cena completa neste ambiente | ⬜ **não medido / não visto** (ver D2GL.md) | — |
+| Medição de FPS em monitores de alta taxa/4K; D2GL dentro de uma partida | ⬜ **não medido / não visto** (ver D2GL.md) | — |
 | Instalação **oficial** da loja (1.14d completa) | ⬜ **não testado**: a suíte rodou na instalação reconstruída (MPQs 1.14b + `Game.exe` 1.14d) | — |
 
 ## Como construir e testar
@@ -67,15 +67,19 @@ AEONIAN_D2GL_DIR=/pasta/com/glide3x.dll+d2gl.mpq \            # opcional: habili
 bash aeonian/tests/integration/run_wine_smoke.sh
 ```
 
-A suíte exige display (o jogo abre uma janela) e leva ~3 min. Ela usa **um
-prefixo Wine de teste** (nunca o `~/.wine`) e só lê os quadros que o próprio motor
-grava (BMP do buffer do jogo): **não captura a tela**.
+A suíte exige display e leva ~3 min. Com **`AEONIAN_HIDDEN=1`** ela roda dentro
+de um `gamescope --backend headless`: **nenhuma janela aparece no monitor** e o
+**som fica desligado** (drivers de áudio do Wine desativados). Use sempre esse
+modo quando o dono estiver usando a máquina. Ela usa **um prefixo Wine de teste**
+(nunca o `~/.wine`) e só lê os quadros que o próprio motor grava (BMP do buffer
+do jogo): **não captura a tela**.
 
 ## Ambiente desta máquina (para reproduzir)
 
-- Instalação 1.14d reconstruída: `/media/aeon/STEAM/Projetos/d2-114d` (sem
+- Instalação 1.14d reconstruída: `/mnt/STEAM/Projetos/d2-114d` (sem
   `binkw32.dll`, `SmackW32.dll`, `ijl11.dll`: vieram da pasta da 1.13c
-  `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`, só para teste).
+  `/mnt/STEAM/Diablo II LoD 1.13c -D2SE`, só para teste). Até 2026-10-28 o disco
+  montava em `/media/aeon/STEAM`.
 - Essa instalação é **reconstruída** (MPQs 1.14b + `Game.exe` 1.14d), não uma
   instalação oficial da loja. Sua pasta `data\` tem 1226 arquivos do overlay
   1.14d: 1016 com **cabeçalho BNUpdate de 24 bytes** e 210 **deltas binários
@@ -84,8 +88,13 @@ grava (BMP do buffer do jogo): **não captura a tela**.
   herda. Numa instalação oficial a pasta `data\` normalmente não existe.
 - Wine 11 (`/usr/bin/wine`); a suíte cria o próprio prefixo de teste (nunca o `~/.wine`).
 - Docker aqui não é utilizável sem root; por isso o llvm-mingw.
-- O `llvm-mingw` e o prefixo Wine ficavam no diretório temporário da sessão e **não
-  existem mais**: na retomada, baixe o toolchain de novo (ver a seção seguinte).
+- **Ferramentas (host CachyOS, desde 2026-10-29)** em `/mnt/STEAM/Projetos/devkit-tools/`,
+  baixadas dos releases oficiais com SHA-256 conferido: `llvm-mingw/` (20261020,
+  `AEONIAN_MINGW_ROOT`), `ghidra/` (12.2) + `jdk/` (Temurin 21), `gh/` (GitHub CLI)
+  e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
+  pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
+- Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
+  dá **66/66** com o D2GL oficial (2026-10-29).
 
 ## Notas de ambiente (Wine) descobertas
 

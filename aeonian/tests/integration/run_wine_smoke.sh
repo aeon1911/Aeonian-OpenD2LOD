@@ -17,6 +17,10 @@
 #   AEONIAN_D2GL_DIR       pasta com o D2GL (glide3x.dll + d2gl.mpq [+ d2gl.ini]);
 #                          sem ela, a fase D2GL e pulada
 #   AEONIAN_RUN_SECONDS    duracao de cada execucao (padrao: 16)
+#   AEONIAN_HIDDEN=1       roda tudo numa tela invisivel (gamescope --backend
+#                          headless), sem abrir janela no monitor
+#
+# O jogo roda SEMPRE sem som: o prefixo de teste nao tem driver de audio.
 #   WINE                   executavel do wine (padrao: wine)
 #
 # Requer um display (o jogo abre uma janela). Saida 0 = tudo passou,
@@ -35,6 +39,27 @@ PREFIX="${AEONIAN_WINEPREFIX:-$WORK/prefix}"
 D2GL="${AEONIAN_D2GL_DIR:-}"
 
 skip() { echo "SKIP: $*"; exit 77; }
+# Drivers de audio do Wine desligados em toda execucao do jogo (o teste e mudo).
+NO_AUDIO_OVERRIDES="winemenubuilder.exe=d;winepulse.drv,winealsa.drv,wineoss.drv=d"
+
+# Modo invisivel: reexecuta este script dentro de um gamescope headless. O
+# codigo de saida volta por um arquivo, porque o gamescope nao o repassa.
+if [[ "${AEONIAN_HIDDEN:-0}" == "1" && -z "${AEONIAN_HIDDEN_INNER:-}" ]]; then
+  command -v gamescope >/dev/null || skip "AEONIAN_HIDDEN=1 exige o gamescope"
+  mkdir -p "$WORK"
+  status_file="$WORK/hidden_status"
+  rm -f "$status_file"
+  gamescope --backend headless -W 1280 -H 720 -- env -u WAYLAND_DISPLAY \
+    AEONIAN_HIDDEN_INNER=1 AEONIAN_WORK_DIR="$WORK" AEONIAN_HIDDEN_STATUS="$status_file" \
+    WINEDLLOVERRIDES="$NO_AUDIO_OVERRIDES" \
+    bash "${BASH_SOURCE[0]}" "$@"
+  exit "$(cat "$status_file" 2>/dev/null || echo 1)"
+fi
+if [[ -n "${AEONIAN_HIDDEN_STATUS:-}" ]]; then
+  # Dentro do gamescope: grava o resultado e encerra o Wine do prefixo de teste
+  # (processos remanescentes impediriam o gamescope de sair).
+  trap 'rc=$?; WINEPREFIX="$PREFIX" "${WINE}server" -k >/dev/null 2>&1; echo "$rc" >"$AEONIAN_HIDDEN_STATUS"' EXIT
+fi
 [[ -n "$D2" && -f "$D2/Game.exe" ]] || skip "defina AEONIAN_D2_DIR (pasta com Game.exe 1.14d)"
 command -v "$WINE" >/dev/null || skip "wine nao encontrado"
 [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] || skip "sem display"
@@ -64,7 +89,7 @@ reg_render() { # valor do registro Render do D2 (1 = GDI; !=1 = modos aceleravei
 run_game() { # run_game <segundos> [VAR=valor...]
   local secs="$1"; shift
   ( cd "$GAME" && env WINEPREFIX="$PREFIX" WINEDEBUG=-all \
-      WINEDLLOVERRIDES="winemenubuilder.exe=d" "$@" \
+      WINEDLLOVERRIDES="$NO_AUDIO_OVERRIDES" "$@" \
       timeout "$secs" "$WINE" Game.exe >"$WORK/wine.out" 2>&1 )
   local rc=$?
   # 124 = o `timeout` encerrou um jogo que seguia vivo (esperado).
@@ -75,7 +100,10 @@ write_config() { printf '%b' "$1" >"$GAME/aeonian/aeonian.ini"; }
 clear_shots() { rm -f "$MODS/selftest/"*.bmp; }
 
 echo "== preparando prefixo Wine"
-WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d" timeout 120 "$WINE" wineboot -u >/dev/null 2>&1 || true
+WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="$NO_AUDIO_OVERRIDES" timeout 120 "$WINE" wineboot -u >/dev/null 2>&1 || true
+# Prefixo de teste sempre MUDO: sem driver de audio no Wine (o teste nunca precisa
+# de som e ele atrapalha quem esta usando a maquina).
+WINEPREFIX="$PREFIX" WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Audio /t REG_SZ /d '' /f >/dev/null 2>&1
 
 echo "== preparando espelho em $GAME"
 rm -rf "$GAME"; mkdir -p "$GAME"

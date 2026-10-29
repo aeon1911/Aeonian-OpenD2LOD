@@ -23,6 +23,30 @@ Testado: **D2GL v1.3.3** (`glide3x.dll` + `d2gl.mpq`). Cabe a você
 cumprir a GPL-3.0 ao redistribuir o D2GL (o código-fonte está no repositório
 do autor).
 
+### Use o release OFICIAL (tela preta com builds não oficiais)
+
+Um D2GL que **não** era o do release oficial (mesmos nomes de arquivo,
+tamanhos e SHA-256 diferentes, encontrado numa pasta 1.13c com D2SE) deixou o
+jogo **preto, só com o texto HD e o cursor**, no Wine com Mesa — tanto na GPU
+(radeonsi, RX 9070 XT) quanto no renderizador de software (llvmpipe) e também
+no Proton-CachyOS 11. O jogo entregava paleta, gamma e texturas corretas ao
+`glide3x.dll` (verificado com uma DLL intermediária de diagnóstico); o
+`D2GL.v1.3.3.zip` oficial, nas mesmas condições, mostrou a imagem completa.
+
+Arquivos do release oficial `D2GL.v1.3.3.zip` (SHA-256):
+
+| Arquivo | SHA-256 |
+|---|---|
+| `glide3x.dll` | `64f9ceb7ae55361dd4e7f339e407b97c4ef27bd40e0f7fc6772c5fda9a4a062f` |
+| `ddraw.dll` | `42e5bc69b50e1e15952960a6cd66261c0d0da71c2e89bc8cc0e20ab61fda84b3` |
+| `d2gl.mpq` | `8dd68138633ed08e5daaf2ed88c8403e6832afec0d9cc64efa1dac506105a271` |
+
+O instalador (`tools/ae_install.py --d2gl-dir`) confere esses hashes e **avisa**
+(não bloqueia) quando um arquivo não é de um release oficial conhecido.
+
+O D2GL grava o próprio log com `Game.exe -3dfx -log` (`d2gl.log` na pasta do
+jogo): versão do jogo detectada, OpenGL e erros de arquivo/shader.
+
 ## Instalar
 
 ```bash
@@ -101,10 +125,15 @@ Validado no jogo real sob Wine 11 (Linux), D2GL v1.3.3, modo Glide: instalação
 restauração; `-3dfx` injetado e `-w` removido; `SwapBuffers` interceptado; overlay
 composto no framebuffer do D2GL e capturado; vídeos de abertura pulados.
 
-**Não validado:** (1) a **imagem completa** do jogo sob o D2GL neste ambiente de
-teste — o D2GL desenhou o texto HD e o cursor do menu mas **não o fundo e a arte
-dos botões**, e o mesmo ocorre **sem o Aeonian** (controle), então não é uma
-regressão do Aeonian, mas **confira no seu hardware**; (2) o modo `ddraw`; (3)
-**medição de desempenho** em 144/240 Hz e 4K (o Aeonian só tem o custo do
-overlay: ≤`overlay_hz` redesenhos/s do canvas + 1 quadrilátero por quadro);
-(4) Windows nativo.
+**Imagem completa validada em 2026-10-29** com o release **oficial** v1.3.3:
+Wine 11.20 (WoW64 novo), Mesa 26.2.5, AMD RX 9070 XT (radeonsi), menu principal
+inteiro (fundo, logo em chamas, botões, neve, texto HD) sem o Aeonian e com o
+Aeonian (quadro gravado pelo motor com o overlay dos plugins, 50 FPS); suíte de
+integração 66/66. A falha anterior (só texto) vinha do build não oficial (seção
+acima).
+
+**Não validado:** (1) dentro de uma partida (só o menu foi visto); (2) o modo
+`ddraw`; (3) **medição de desempenho** em 144/240 Hz e 4K (o Aeonian só tem o
+custo do overlay: ≤`overlay_hz` redesenhos/s do canvas + 1 quadrilátero por
+quadro); (4) Windows nativo; (5) o build oficial sob Proton (o Proton-CachyOS só
+foi testado com o build não oficial).
