@@ -109,4 +109,6 @@ de abertura de override e as primeiras exceções de 1ª chance do processo.
 
 ## Plugins
 
-Veja [`PLUGIN_API.md`](PLUGIN_API.md) e `aeonian/examples/hello-plugin/`.
+Veja [`PLUGIN_API.md`](PLUGIN_API.md) e `aeonian/examples/hello-plugin/`. Mod
+completo que lê o estado do jogo: [`MAP_OVERLAY.md`](MAP_OVERLAY.md) (monstros,
+objetivos e saídas no automap).

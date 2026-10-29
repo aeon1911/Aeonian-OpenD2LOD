@@ -1,6 +1,6 @@
 # Roadmap
 
-Estado em 2026-10-28. Marcos definidos em [`SCOPE.md` §6](SCOPE.md).
+Estado em 2026-10-29. Marcos definidos em [`SCOPE.md` §6](SCOPE.md).
 
 ## M1 — Ponto de entrada ✅
 
@@ -13,7 +13,8 @@ Feito e validado **no `Game.exe` 1.14d real sob Wine 11 (Linux)**:
   `on_shutdown`) e API de log/símbolos/hook inline/patch;
 - falha segura (build desconhecida; `AEONIAN_DISABLE=1`);
 - testes: `aeonian/tests/core_test.cpp` (host) e
-  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real, 66 checagens).
+  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real; 92 checagens com a
+  partida da fase E, 78 sem ela).
 
 **Não validado ainda:** Windows nativo; qualquer ambiente tipo Wine-NX/Switch;
 instalação oficial da loja; `-txt`. (A troca de arte foi verificada pelo quadro
@@ -30,21 +31,26 @@ Feito e validado no jogo real (Wine 11, 1.14d):
 - **`request_screenshot`** do quadro do próprio jogo (BMP) e API de mods;
 - **integração do D2GL** ([`modding/D2GL.md`](modding/D2GL.md)): instalador
   `--d2gl-dir`, `-3dfx` automático, `-w` removido, `skip_intro`;
-- exemplos: `hud-demo` (HUD com F9) e `tools/make_art_demo.py` (mod de arte).
+- exemplos: `hud-demo` (HUD com F9), `tools/make_art_demo.py` (mod de arte) e
+  `map-overlay` (mapa de C1/C2, abaixo).
 
 **Pendências desta etapa:** modo DirectDraw (código existe, **nunca exercitado**: o
 Wine travou com o `ddraw.dll` do D2GL e não deu para forçar o DirectDraw
 nativo); a **imagem completa sob o D2GL** neste ambiente (ver D2GL.md); medir
 desempenho em monitores de alta taxa/resolução; Windows nativo.
 
-## M2.2 — Estado do jogo (próximo, precisa de engenharia reversa)
+## M2.2 — Estado do jogo (em andamento)
 
 Plugins que **leem o jogo**. Cada item = spec de análise → símbolos verificados em
 `addresses/1.14d.ini` → API. Prioridade: destrava os requisitos do client (abaixo).
 
 1. **Unidades** (jogador, monstros, objetos/portais): ponteiro do jogador, tabelas
-   de unidades por tipo, posição, vida, tipo de monstro.
-2. **Nível/Mapa**: nível atual, geometria/saídas, *automap*.
+   de unidades por tipo, posição, vida, tipo de monstro. 🟡 spec
+   [`game-exe-1.14d-units.md`](specs/game-exe-1.14d-units.md) + símbolos; usado pelo
+   `map-overlay` (vida e dono da unidade ainda não).
+2. **Nível/Mapa**: nível atual, geometria/saídas, *automap*. 🟡 spec
+   [`game-exe-1.14d-levels-automap.md`](specs/game-exe-1.14d-levels-automap.md) +
+   símbolos; usado pelo `map-overlay` (Atos II–V e resoluções ≠ 800×600 em aberto).
 3. **Personagem**: atributos, pontos livres, habilidades e a rotina de criação.
 4. **Carregador de tabelas**: hot-reload e acesso a linhas.
 
@@ -55,10 +61,18 @@ finalizada**. Todos dependem do M2.2.
 
 | # | Funcionalidade | Depende de | Observações |
 |---|---|---|---|
-| C1 | **Mapa: marcar onde ficam a entrada e a saída** (portas/escadas/waypoints) da área | níveis + objetos/saídas; desenho no automap (M2.1 `on_present`) | o D2 conhece as saídas de cada nível (tabelas de nível/`levels`); precisa localizá-las em coordenadas de mundo |
-| C2 | **Mapa: mostrar todos os inimigos** | lista de unidades-monstro do jogador atual | só lê o estado e desenha (mesma base de C1); no modo multijogador/online não se aplica |
+| C1 | **Mapa: marcar onde ficam a entrada e a saída** (portas/escadas/waypoints) da área | níveis + objetos/saídas; desenho no automap (M2.1 `on_present`) | 🟡 **feito no Ato I** pelo mod `map-overlay` ([`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): warps (exatos ou pela sala), bordas com outros níveis e o waypoint do Ato I, em tela cheia e minimapa, GDI e D2GL |
+| C2 | **Mapa: mostrar todos os inimigos** | lista de unidades-monstro do jogador atual | 🟡 **feito** pelo mesmo mod: monstros vivos das salas carregadas, NPCs à parte; campeão/único/superúnico pelos bits da spec (ainda não vistos em jogo); no modo multijogador/online não se aplica |
 | C3 | **Planejador de builds**: salvar builds e **aplicá-las a personagens novos** | personagem (atributos/habilidades) + criação de personagem + UI | formato próprio versionado (`builds/*.json`); aplicar = distribuir pontos conforme o plano a cada nível, via API do jogo (nada de editar saves) |
 | C4 | **Compatibilidade total com mods — Project Diablo 2 e Median XL** | suporte à base **1.13c** (ver abaixo) | **risco alto: ver a nota** |
+
+**C1/C2 — o que falta** (detalhes e evidência em
+[`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): validar Atos II–V e
+dificuldades acima do Normal; ver em jogo campeões, únicos e superúnicos; nova
+análise para o bit de lacaio, o dono da unidade (mercenários/invocações), as
+colunas de `objects` (waypoints e objetos de quest sem configuração manual), o
+estado de painel aberto e o encaixe do D2GL fora de 800×600/janela. Só o que o
+cliente já carregou aparece: o mod não chama `AddRoomData`/`InitLevel`.
 
 > **Nota sobre C4 (decisão arquitetural pendente).** Project Diablo 2 e Median XL
 > são mods sobre o **Diablo II 1.13c** (várias DLLs: `D2Client.dll`, `D2Common.dll`,

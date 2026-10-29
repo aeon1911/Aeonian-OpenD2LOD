@@ -1,0 +1,55 @@
+; Roteiro manual do condutor de teste: alem da cidade (ver cidade.txt), anda
+; ate a Charneca Sangrenta e a entrada do Covil do Mal. Depende do mapa (semente)
+; e o personagem pode morrer: nao faz parte da suite automatica.
+; Coordenadas no quadro 800x600 (lidas de quadros gravados pelo motor).
+wait 3000
+click 400 300          ; sai da tela de titulo
+key space
+wait 3000
+click 400 308          ; SINGLE PLAYER
+wait 4000
+click 400 290          ; Barbaro (tela de classe, sem personagens)
+wait 2500
+type Aeontest
+wait 800
+key enter
+waitgame 60000
+wait 3000
+shot e00_cidade_sem_automap
+key tab
+wait 800
+ensuremode 0
+automap 0 8000
+wait 1200
+shot e01_cidade_tela_cheia
+key f11                ; tecla do mod: desliga as marcas
+wait 800
+shot e01b_cidade_marcas_desligadas
+key f11
+wait 500
+ensuremode 1
+automap 1 8000
+wait 1200
+shot e02_cidade_minimapa
+walk 2 120000          ; ate o nivel 2 pela borda marcada pelo mod
+walkin 30 25000
+wait 1500
+shot m03_charneca_minimapa
+ensuremode 0
+automap 0 8000
+wait 1000
+shot m04_charneca_tela_cheia
+walkexit 8 120000      ; ate ver a posicao exata da entrada do Covil do Mal
+wait 1000
+shot m05_entrada_covil_tela_cheia
+ensuremode 1
+automap 1 8000
+wait 1000
+shot m06_entrada_covil_minimapa
+wait 1000
+key esc
+wait 800
+click 400 262          ; SAVE AND EXIT GAME
+wait 6000
+click 400 551          ; EXIT DIABLO II
+wait 3000

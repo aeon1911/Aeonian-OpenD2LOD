@@ -16,6 +16,9 @@
 #   AEONIAN_MPQ_EXTRACT    ae_mpq_extract; sem ele, a fase de arte/VFS e pulada
 #   AEONIAN_D2GL_DIR       pasta com o D2GL (glide3x.dll + d2gl.mpq [+ d2gl.ini]);
 #                          sem ela, a fase D2GL e pulada
+#   AEONIAN_D2_LNG         um D2.LNG (a instalacao reconstruida nao tem; sem ele nao
+#                          se entra em partida). Copiado SO para a copia-espelho;
+#                          habilita a fase E (partida real com o mod de mapa)
 #   AEONIAN_RUN_SECONDS    duracao de cada execucao (padrao: 16)
 #   AEONIAN_HIDDEN=1       roda tudo numa tela invisivel (gamescope --backend
 #                          headless), sem abrir janela no monitor
@@ -63,7 +66,7 @@ fi
 [[ -n "$D2" && -f "$D2/Game.exe" ]] || skip "defina AEONIAN_D2_DIR (pasta com Game.exe 1.14d)"
 command -v "$WINE" >/dev/null || skip "wine nao encontrado"
 [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] || skip "sem display"
-for f in aeonian.dll ijl11.dll selftest.dll hud.dll; do
+for f in aeonian.dll ijl11.dll selftest.dll hud.dll map_overlay.dll; do
   [[ -f "$BUILD/$f" ]] || skip "$BUILD/$f ausente; compile antes (cmake --build)"
 done
 
@@ -186,6 +189,80 @@ if [[ -n "${AEONIAN_MPQ_EXTRACT:-}" && -x "${AEONIAN_MPQ_EXTRACT}" ]]; then
   rm -rf "$MODS/art-demo"
 else
   echo "  SKIP  fase de arte/VFS (defina AEONIAN_MPQ_EXTRACT)"
+fi
+
+# ------------------------------------------------- fase A3 (mod de mapa C1/C2)
+echo "== fase A3: mod de mapa (map-overlay): simbolos verificados e falha segura"
+mkdir -p "$MODS/map-overlay"
+cp "$BUILD/map_overlay.dll" "$ROOT/aeonian/examples/map-overlay/mod.ini" \
+   "$ROOT/aeonian/examples/map-overlay/map-overlay.ini" "$MODS/map-overlay/"
+reg_render 1
+write_config '[core]\nlog_level = debug\nextra_args = -w -ns\n[game]\nskip_intro = true\n'
+run_game "$SECS"
+expect "map-overlay carregado"                     "\\[map-overlay\\] plugin map_overlay\\.dll carregado"
+expect "map-overlay: todos os simbolos resolvidos" '\[map-overlay\] simbolos: ([0-9]+)/\1 resolvidos'
+forbid "nenhum simbolo com bytes divergentes"      'bytes nao conferem'
+forbid "nenhum recurso do mapa desligado"          '\[map-overlay\] recurso desligado'
+expect "gancho de contagem no DrawAutomap"         '\[map-overlay\] gancho de contagem em DrawAutomap \(0x0045ad60\) instalado'
+forbid "no menu (fora da partida) nada e desenhado" '\[map-overlay\] em partida'
+forbid "sem excecoes de 1a chance (mapa)"          'excecao de 1a chance'
+# Falha segura: bytes errados num simbolo do banco desligam so o recurso dele.
+ADDR_INI="$GAME/aeonian/addresses/1.14d.ini"
+cp "$ADDR_INI" "$WORK/1.14d.ini.orig"
+sed -i '/^\[symbol\.D2Client\.FindServerSideUnit\]/,/^description/ s/^bytes *= *52 /bytes       = 53 /' "$ADDR_INI"
+run_game 10
+expect "bytes errados sao recusados pelo motor"    'simbolo D2Client\.FindServerSideUnit: bytes nao conferem'
+expect "o mod registra qual simbolo faltou"        '\[map-overlay\] simbolo D2Client\.FindServerSideUnit nao resolvido'
+expect "o mod desliga so os monstros"              '\[map-overlay\] recurso desligado: monstros e NPCs'
+forbid "o resto do mapa segue ativo"               '\[map-overlay\] .*mod inativo'
+forbid "sem excecoes de 1a chance (mapa, simbolo recusado)" 'excecao de 1a chance'
+cp "$WORK/1.14d.ini.orig" "$ADDR_INI"
+rm -rf "$MODS/map-overlay"
+
+# ----------------------------------- fase E (partida real com o mod de mapa)
+if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" && -f "$BUILD/mapdrive.dll" ]]; then
+  echo "== fase E: partida single player com o mod de mapa (automap nos dois modos)"
+  cp "$AEONIAN_D2_LNG" "$GAME/D2.LNG"   # so na copia-espelho
+  # Prefixo proprio desta fase, dentro da pasta de trabalho: o personagem de
+  # teste e criado de novo a cada execucao (os saves dele sao apagados aqui).
+  PREFIX_MAIN="$PREFIX"
+  PREFIX="$WORK/prefix-partida"
+  if [[ ! -d "$PREFIX" ]]; then
+    WINEPREFIX="$PREFIX" WINEDEBUG=-all WINEDLLOVERRIDES="$NO_AUDIO_OVERRIDES" timeout 120 "$WINE" wineboot -u >/dev/null 2>&1 || true
+  fi
+  WINEPREFIX="$PREFIX" WINEDEBUG=-all "$WINE" reg add 'HKCU\Software\Wine\Drivers' /v Audio /t REG_SZ /d '' /f >/dev/null 2>&1
+  SAVES="$PREFIX/drive_c/users/$USER/Saved Games/Diablo II"
+  [[ "$SAVES" == "$WORK"/* && -d "$SAVES" ]] && rm -rf "$SAVES"
+  mkdir -p "$MODS/map-overlay" "$MODS/mapdrive"
+  cp "$BUILD/map_overlay.dll" "$ROOT/aeonian/examples/map-overlay/mod.ini" \
+     "$ROOT/aeonian/examples/map-overlay/map-overlay.ini" "$MODS/map-overlay/"
+  cp "$BUILD/mapdrive.dll" "$MODS/mapdrive/"
+  cp "$HERE/mapdrive-plugin/cidade.txt" "$MODS/mapdrive/mapdrive.txt"
+  # Prioridade maior: resolve os simbolos antes do gancho do map-overlay.
+  printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
+  reg_render 1
+  write_config '[core]\nlog_level = debug\nextra_args = -w -ns\n[mods]\ndisabled = selftest, hud-demo\n[game]\nskip_intro = true\n'
+  rm -f "$MODS/mapdrive/"*.bmp
+  run_game 75
+  expect "personagem de teste criado e partida iniciada" 'MAPDRIVE em partida'
+  expect "mapa: em partida com o automap aberto"         '\[map-overlay\] em partida, automap aberto'
+  expect "mapa: automap em tela cheia (divisor 10, recorte 800x600)" '\[map-overlay\] automap: modo 0, divisor 10, .*recorte lido \(-16,-16,800,600\)'
+  expect "mapa: automap em minimapa (divisor 20)"        '\[map-overlay\] automap: modo 1, divisor 20, .*recorte lido'
+  expect "mapa: cidade lida (salas, NPCs, waypoint, borda)" '\[map-overlay\] nivel 1: [0-9]+ salas .*, [1-9][0-9]* NPCs, 1 objetos, .*trechos de borda para 1 nivel'
+  expect "mapa: saida pela borda para a Charneca (nivel 2)" '\[map-overlay\]   saida pela borda -> nivel 2 '
+  expect "mapa: marcas desenhadas em tela cheia"         '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'
+  expect "mapa: marcas desenhadas no minimapa"           '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 1'
+  expect "mapa: tecla do mod desliga e religa as marcas" '\[map-overlay\] marcas desligadas'
+  expect "roteiro do condutor sem falhas"                'MAPDRIVE roteiro concluido sem falhas'
+  forbid "nenhum simbolo com bytes divergentes (partida)" 'bytes nao conferem'
+  forbid "sem excecoes de 1a chance (partida)"           'excecao de 1a chance'
+  check "quadro da cidade em tela cheia gravado (800x600)" python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" 800 600
+  check "quadro da cidade no minimapa gravado (800x600)"   python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e02_cidade_minimapa.bmp" 800 600
+  mkdir -p "$WORK/quadros-mapa" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa/" 2>/dev/null
+  rm -rf "$MODS/map-overlay" "$MODS/mapdrive" "$GAME/D2.LNG"
+  PREFIX="$PREFIX_MAIN"
+else
+  echo "  SKIP  fase E: partida real (defina AEONIAN_D2_LNG; exige mapdrive.dll)"
 fi
 
 # --------------------------------------------------------- fase B (D2GL, Glide)

@@ -84,7 +84,9 @@ void OnPresent(void*, AeonianCanvas* c) {
 Dicas: não use a cor-chave nos seus desenhos; use fontes **sem suavização**
 (`NONANTIALIASED_QUALITY`) para não deixar bordas magenta; calcule posições a
 partir de `canvas->width/height` (não assuma 800×600). Veja
-`aeonian/examples/hud-demo/` (distintivo, painel de mods com **F9**, FPS).
+`aeonian/examples/hud-demo/` (distintivo, painel de mods com **F9**, FPS) e
+`aeonian/examples/map-overlay/` (lê o estado do jogo no `on_tick` e desenha no
+automap: [`MAP_OVERLAY.md`](MAP_OVERLAY.md)).
 
 ## Hooks inline
 
@@ -105,9 +107,23 @@ Regras (violá-las trava o jogo):
 - Se os bytes em `alvo` ≠ `esperado`, retorna `AEONIAN_ERR_MISMATCH` e **não
   escreve nada**: trate como "esta build não é suportada".
 
-Símbolos disponíveis hoje: só `Game.EntryPoint` (âncora de teste). O banco
-cresce por contribuição de dados + spec — ver [`../ROADMAP.md`](../ROADMAP.md) e
+Símbolos disponíveis hoje: 45 em [`addresses/1.14d.ini`](../../aeonian/addresses/1.14d.ini)
+— `Game.EntryPoint` (âncora de teste) e os de estado do jogo (unidades, níveis,
+saídas, automap, primitivas de desenho), cada um documentado em
+[`../specs/game-exe-1.14d-units.md`](../specs/game-exe-1.14d-units.md) e
+[`../specs/game-exe-1.14d-levels-automap.md`](../specs/game-exe-1.14d-levels-automap.md).
+Vários são **âncoras de dados**: a função não é para chamar; o endereço de um global
+está dentro dos bytes verificados, no deslocamento que a descrição do símbolo dá
+(exemplo completo: [`MAP_OVERLAY.md`](MAP_OVERLAY.md)). O banco cresce por
+contribuição de dados + spec — ver [`../ROADMAP.md`](../ROADMAP.md) e
 [`../specs/game-exe-1.14d-hooking-surface.md`](../specs/game-exe-1.14d-hooking-surface.md).
+
+> **Símbolo desviado por outro mod.** `resolve_symbol` confere os bytes **atuais**
+> do alvo. Depois que um plugin desvia uma função (`hook_inline`), os primeiros
+> bytes dela mudam e quem resolver o mesmo símbolo **depois** recebe 0 (e o log
+> diz "bytes nao conferem"). Resolva os símbolos em `AeonianPluginInit`; se o seu
+> mod depende de um símbolo que outro mod desvia, dê a ele `priority` maior (carrega
+> antes). Exemplo: o `map-overlay` desvia `D2Client.DrawAutomap`.
 
 ## Compatibilidade
 

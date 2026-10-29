@@ -29,7 +29,8 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DLLS = ["aeonian.dll", "ijl11.dll", "hello.dll", "hud.dll"]  # sem o selftest (so teste)
+DLLS = ["aeonian.dll", "ijl11.dll", "hello.dll", "hud.dll",
+        "map_overlay.dll"]  # sem selftest/mapdrive (so teste)
 FILES = [
     "README.md", "LICENSE", "NOTICE.md",
     "tools/ae_install.py", "tools/ae_mirror.sh", "tools/make_art_demo.py", "tools/bmp2png.py",
@@ -37,8 +38,12 @@ FILES = [
     "aeonian/addresses/1.14d.ini", "aeonian/config/aeonian.ini",
     "aeonian/examples/hello-plugin/hello.cpp", "aeonian/examples/hello-plugin/mod.ini",
     "aeonian/examples/hud-demo/hud.cpp", "aeonian/examples/hud-demo/mod.ini",
+    "aeonian/examples/map-overlay/mod.ini", "aeonian/examples/map-overlay/map-overlay.ini",
+    "aeonian/examples/map-overlay/map_overlay.cpp", "aeonian/examples/map-overlay/map_logic.h",
+    "aeonian/examples/map-overlay/map_logic.cpp", "aeonian/examples/map-overlay/game_memory.h",
     "docs/FINAL_TEST.md", "docs/HANDOFF.md", "docs/ROADMAP.md", "docs/SCOPE.md",
     "docs/modding/MODS.md", "docs/modding/PLUGIN_API.md", "docs/modding/D2GL.md",
+    "docs/modding/MAP_OVERLAY.md",
 ]
 
 

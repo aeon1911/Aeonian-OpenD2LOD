@@ -94,6 +94,17 @@ if(WIN32)
     target_link_options(hud_demo_plugin PRIVATE ${AE_WIN_LINK})
     set_target_properties(hud_demo_plugin PROPERTIES PREFIX "" OUTPUT_NAME "hud")
 
+    # Mod de mapa (C1/C2): marca monstros, objetivos e saidas no automap.
+    add_library(map_overlay_plugin SHARED
+        examples/map-overlay/map_overlay.cpp
+        examples/map-overlay/map_logic.cpp)
+    target_include_directories(map_overlay_plugin PRIVATE include)
+    target_link_libraries(map_overlay_plugin PRIVATE ae_core ae_warnings gdi32 user32)
+    target_compile_options(map_overlay_plugin PRIVATE ${AE_WIN_COMPILE})
+    target_link_options(map_overlay_plugin PRIVATE ${AE_WIN_LINK})
+    set_target_properties(map_overlay_plugin PROPERTIES
+        PREFIX "" OUTPUT_NAME "map_overlay")
+
     # Plugin de autoteste (so para tests/integration).
     add_library(selftest_plugin SHARED
         tests/integration/selftest-plugin/selftest.cpp)
@@ -103,6 +114,18 @@ if(WIN32)
     target_link_options(selftest_plugin PRIVATE ${AE_WIN_LINK})
     set_target_properties(selftest_plugin PROPERTIES
         PREFIX "" OUTPUT_NAME "selftest")
+
+    # Condutor de teste do mod de mapa (so para tests/integration): leva o
+    # jogo ate uma partida e grava quadros.
+    add_library(mapdrive_plugin SHARED
+        tests/integration/mapdrive-plugin/mapdrive.cpp
+        examples/map-overlay/map_logic.cpp)
+    target_include_directories(mapdrive_plugin PRIVATE include examples/map-overlay)
+    target_link_libraries(mapdrive_plugin PRIVATE ae_warnings user32)
+    target_compile_options(mapdrive_plugin PRIVATE ${AE_WIN_COMPILE})
+    target_link_options(mapdrive_plugin PRIVATE ${AE_WIN_LINK})
+    set_target_properties(mapdrive_plugin PROPERTIES
+        PREFIX "" OUTPUT_NAME "mapdrive")
 else()
     enable_testing()
     add_executable(ae_core_test tests/core_test.cpp)
@@ -110,4 +133,14 @@ else()
     target_compile_definitions(ae_core_test PRIVATE
         AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME core COMMAND ae_core_test)
+
+    # Logica portavel do mod map-overlay (formula do automap, classificacao,
+    # varredura das estruturas) sobre uma memoria sintetica.
+    add_executable(ae_map_overlay_test
+        examples/map-overlay/map_logic_test.cpp
+        examples/map-overlay/map_logic.cpp)
+    target_link_libraries(ae_map_overlay_test PRIVATE ae_core ae_warnings)
+    target_compile_definitions(ae_map_overlay_test PRIVATE
+        AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME map_overlay COMMAND ae_map_overlay_test)
 endif()

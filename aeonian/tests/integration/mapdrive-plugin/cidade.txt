@@ -1,0 +1,32 @@
+; Roteiro do condutor de teste (fase E de run_wine_smoke.sh): cria um
+; personagem, entra na cidade do Ato I e grava o automap nos dois modos.
+; Coordenadas no quadro 800x600 (lidas de quadros gravados pelo motor).
+wait 3000
+click 400 300          ; sai da tela de titulo
+key space
+wait 3000
+click 400 308          ; SINGLE PLAYER
+wait 4000
+click 400 290          ; Barbaro (tela de classe, sem personagens)
+wait 2500
+type Aeontest
+wait 800
+key enter
+waitgame 60000
+wait 3000
+shot e00_cidade_sem_automap
+key tab
+wait 800
+ensuremode 0
+automap 0 8000
+wait 1200
+shot e01_cidade_tela_cheia
+key f11                ; tecla do mod: desliga as marcas
+wait 800
+shot e01b_cidade_marcas_desligadas
+key f11
+wait 500
+ensuremode 1
+automap 1 8000
+wait 1200
+shot e02_cidade_minimapa

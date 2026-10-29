@@ -33,12 +33,13 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | VFS de mods (arquivos de `data\`) | ✅ | log + trace de arquivos do Wine |
 | Plugins + eventos + hook inline | ✅ | selftest dentro do `Game.exe` |
 | Falha segura (build desconhecida, `AEONIAN_DISABLE`) | ✅ | fases B/C da suíte |
-| Símbolos de código do jogo | 🟡 só `Game.EntryPoint` | `addresses/1.14d.ini` |
+| Símbolos de código do jogo | ✅ 45 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho), com specs; 10 deles usados e verificados em jogo pelo `map-overlay` | `addresses/1.14d.ini`; suíte, fases A3 e E |
 | `on_present` (overlay) GDI + D2GL/OpenGL, `request_screenshot`, mods API | ✅ | suíte: quadro do jogo gravado e comparado |
 | Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica e imagem completa com o **release oficial** v1.3.3 (Wine 11.20, RX 9070 XT, 2026-10-29); o instalador avisa se o D2GL não for oficial | [`modding/D2GL.md`](modding/D2GL.md) |
 | Mod de arte visível (botões recoloridos via VFS) | ✅ | diff de 11 mil pixels no menu |
 | Modo DirectDraw (`on_present`) | ⬜ código sem teste | o Wine não o ativou |
-| Estado do jogo (unidades/mapa/personagem) e requisitos do client | ⬜ | M2.2 e "Requisitos do client" no [`ROADMAP.md`](ROADMAP.md) |
+| Mod de mapa C1/C2 (`map-overlay`: monstros, objetivos e saídas sobre o automap) | 🟡 Ato I, Normal, um jogador; tela cheia e minimapa; GDI e D2GL (janela 800×600 e 1280×720). Campeão/único/superúnico, Atos II–V, D2GL em tela cheia **não vistos** | [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md); suíte, fase E; quadros gravados |
+| Estado do jogo: personagem; requisitos C3/C4 do client | ⬜ | M2.2 e "Requisitos do client" no [`ROADMAP.md`](ROADMAP.md) |
 | Windows nativo, Switch/Wine-NX | ⬜ **não testado** | — |
 | Medição de FPS em monitores de alta taxa/4K; D2GL dentro de uma partida | ⬜ **não medido / não visto** (ver D2GL.md) | — |
 | Instalação **oficial** da loja (1.14d completa) | ⬜ **não testado**: a suíte rodou na instalação reconstruída (MPQs 1.14b + `Game.exe` 1.14d) | — |
@@ -50,7 +51,7 @@ Toolchain: a **única validada** é um `llvm-mingw` (release `20261020`, variant
 `g++-mingw-w64-i686` do sistema deve servir, mas **não foi testado**.
 
 ```bash
-# núcleo portável + testes unitários (host)
+# núcleo portável + testes unitários (host): core e map_overlay
 cmake -S . -B build/host -G Ninja && cmake --build build/host && ctest --test-dir build/host
 
 # DLLs que rodam no jogo (i686)
@@ -64,10 +65,11 @@ AEONIAN_D2_DIR=/caminho/d2-114d \
 AEONIAN_EXTRA_DLL_DIR=/caminho/com/binkw32+SmackW32+ijl11 \   # só se a instalação não os tiver
 AEONIAN_MPQ_EXTRACT=/caminho/ae_mpq_extract \                 # opcional: habilita a fase de arte/VFS
 AEONIAN_D2GL_DIR=/pasta/com/glide3x.dll+d2gl.mpq \            # opcional: habilita a fase D2GL
+AEONIAN_D2_LNG=/caminho/D2.LNG \                              # opcional: fase E (partida real; copiado só para o espelho)
 bash aeonian/tests/integration/run_wine_smoke.sh
 ```
 
-A suíte exige display e leva ~3 min. Com **`AEONIAN_HIDDEN=1`** ela roda dentro
+A suíte exige display e leva ~3 min (~5 min com a fase E). Com **`AEONIAN_HIDDEN=1`** ela roda dentro
 de um `gamescope --backend headless`: **nenhuma janela aparece no monitor** e o
 **som fica desligado** (drivers de áudio do Wine desativados). Use sempre esse
 modo quando o dono estiver usando a máquina. Ela usa **um prefixo Wine de teste**
@@ -94,9 +96,20 @@ do jogo): **não captura a tela**.
   e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
   pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
 - Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
-  dá **66/66** com o D2GL oficial (2026-10-29).
+  dá **92/92** com o D2GL oficial e `AEONIAN_D2_LNG` (78/78 sem a fase E), em
+  2026-10-29. A instalação reconstruída não tem `D2.LNG`; o da pasta 1.13c
+  (`/mnt/STEAM/Diablo II LoD 1.13c -D2SE/D2.LNG`) serve para a cópia-espelho.
 
 ## Notas de ambiente (Wine) descobertas
+
+- **Partida no espelho:** sem `D2.LNG` o jogo não entra em partida. O condutor de
+  teste (`tests/integration/mapdrive-plugin/`) cria o personagem por cliques
+  postados na janela; a opção *Automap Size* **persiste** no prefixo entre execuções
+  (por isso o comando `ensuremode`). Fora da cidade do Ato I o mapa muda a cada
+  partida; andar até a Charneca é heurístico (roteiro `charneca.txt`, manual).
+- **Ganchos e `resolve_symbol`:** depois que um mod desvia uma função, os bytes
+  dela mudam e quem resolver aquele símbolo depois recebe 0 (visto com
+  `D2Client.DrawAutomap`). Hoje a ordem de carga (prioridade) resolve.
 
 - O D2 grava `Render` em `HKCU\Software\Blizzard Entertainment\Diablo II\VideoConfig`
   na 1ª execução. `Render=1` = GDI. O D2GL só se comporta bem com `Render` ≠ 1
@@ -146,7 +159,8 @@ do jogo): **não captura a tela**.
    `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`. Projeto-irmão do Switch:
    `DIABLO 2 LOD SWITCH PORT` e `medianxl-switch`, na mesma pasta.
 5. **Recompile e rode a suíte** (seção "Como construir e testar"). Referência:
-   66 PASS / 0 FAIL no commit `3089e7c`, Wine 11 em Linux.
+   66 PASS / 0 FAIL no commit `3089e7c`; 92 PASS / 0 FAIL com o `map-overlay` e a
+   fase E (2026-10-29, ainda sem commit), Wine 11 em Linux.
 6. `build/` e `dist/` não são versionados. Regenere-os: CMake e
    `python3 tools/package.py`.
 7. O histórico da conversa e as memórias do Claude ficam em
@@ -177,8 +191,12 @@ do jogo): **não captura a tela**.
    na `main`; estratégia do C4 (base 1.13c do PD2 e do Median XL).
 1. **Teste final do usuário** (roteiro em [`FINAL_TEST.md`](FINAL_TEST.md)): conferir a
    imagem sob o D2GL no hardware dele e medir o desempenho.
-2. **M2.2 — estado do jogo** (engenharia reversa: unidades, nível/mapa, personagem).
-3. **Requisitos do client** (mapa com entrada/saída e inimigos; planejador de builds;
-   compatibilidade com Project Diablo 2 / Median XL, que é base 1.13c) — ver o
-   [`ROADMAP.md`](ROADMAP.md).
+2. **M2.2 — estado do jogo**: unidades e nível/mapa têm spec e símbolos; falta o
+   personagem (atributos, habilidades, criação) para o C3. Nova análise pedida pelo
+   `map-overlay` (lista em [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)):
+   bit de lacaio, dono da unidade, colunas de `objects`, painel aberto, encaixe do
+   D2GL, Atos II–V.
+3. **Requisitos do client**: C1/C2 feitos no Ato I (`map-overlay`); planejador de
+   builds (C3); compatibilidade com Project Diablo 2 / Median XL (C4, base 1.13c) —
+   ver o [`ROADMAP.md`](ROADMAP.md).
 4. Validar em Windows nativo e planejar o teste em Wine-NX.
