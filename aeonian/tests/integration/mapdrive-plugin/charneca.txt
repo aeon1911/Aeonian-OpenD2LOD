@@ -22,6 +22,7 @@ ensuremode 0
 automap 0 8000
 wait 1200
 shot e01_cidade_tela_cheia
+wait 200               ; o quadro so e gravado no proximo present
 key f11                ; tecla do mod: desliga as marcas
 wait 800
 shot e01b_cidade_marcas_desligadas

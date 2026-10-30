@@ -21,12 +21,17 @@
 // jogo (PostMessage); o cursor so e movido dentro dela (que roda num
 // gamescope invisivel nos testes). Escreve linhas "MAPDRIVE ..." no log.
 //
+// Com AEONIAN_MAPDRIVE_HOOK_DRAW=1 (e prioridade maior que a do map-overlay)
+// ele tambem desvia D2Client.DrawAutomap ao carregar, so contando as chamadas:
+// e o caso de um mod encontrar a funcao ja desviada por outro.
+//
 // Comandos do roteiro (um por linha; ';' comeca comentario):
 //   wait <ms>                  espera
 //   click <x> <y>              clique esquerdo em coordenadas do quadro 800x600
 //   key <tecla> [vezes]        tab, esc, enter, space, up, down, left, right, f1..f12, letra
 //   type <texto>               WM_CHAR para cada caractere
-//   shot <nome>                grava <pasta do mod>\<nome>.bmp
+//   shot <nome>                pede <pasta do mod>\<nome>.bmp (gravado no proximo
+//                              present: espere antes de mudar o que aparece nele)
 //   waitgame <ms>              espera o jogador e o ato do cliente (partida)
 //   automap <0|1> <ms>         espera o automap visivel no modo dado
 //   ensuremode <0|1>           troca o tamanho do automap pelo menu (Esc ->
@@ -51,6 +56,20 @@
 #include "aeonian/api.h"
 #include "game_memory.h"
 #include "map_logic.h"
+
+// Desvio de contagem: incrementa e segue pelo trampolim, sem tocar em pilha nem
+// registradores (a 1a instrucao da original e um cmp, que refaz as flags).
+extern "C" {
+volatile LONG g_ae_drive_draws = 0;
+void* g_ae_drive_trampoline = nullptr;
+void AeMapDriveDrawDetour();
+}
+__asm__(
+    ".text\n"
+    ".globl _AeMapDriveDrawDetour\n"
+    "_AeMapDriveDrawDetour:\n"
+    "  lock incl _g_ae_drive_draws\n"
+    "  jmp *_g_ae_drive_trampoline\n");
 
 namespace {
 
@@ -443,6 +462,10 @@ void OnTick(void*, uint32_t) {
     Say(AEONIAN_LOG_DEBUG, "MAPDRIVE ok: %s", g_script[g_pc].c_str());
     Next();
     if (g_pc >= g_script.size()) {
+      if (g_ae_drive_trampoline != nullptr) {
+        Say(AEONIAN_LOG_INFO, "MAPDRIVE desvio proprio contou %ld chamadas de DrawAutomap",
+            static_cast<long>(g_ae_drive_draws));
+      }
       Say(g_failed ? AEONIAN_LOG_ERROR : AEONIAN_LOG_INFO, "MAPDRIVE roteiro concluido %s",
           g_failed ? "COM FALHAS" : "sem falhas");
     }
@@ -450,6 +473,20 @@ void OnTick(void*, uint32_t) {
 }
 
 void OnLoaded(void*) { g_started = true; }
+
+void HookDrawAutomap(const map_overlay::MemoryView& original) {
+  const uintptr_t target = g_host->resolve_symbol(g_host, "D2Client.DrawAutomap");
+  uint8_t expected[7];  // a 1a instrucao, sem operando relativo
+  void* trampoline = nullptr;
+  const int rc = target != 0 && original.Read(static_cast<uint32_t>(target), expected, 7)
+                     ? g_host->hook_inline(g_host, target, expected, 7,
+                                           reinterpret_cast<void*>(&AeMapDriveDrawDetour),
+                                           &trampoline)
+                     : AEONIAN_ERR_MISMATCH;
+  g_ae_drive_trampoline = trampoline;
+  Say(rc == AEONIAN_OK ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "MAPDRIVE desvio proprio em DrawAutomap rc=%d", rc);
+}
 
 }  // namespace
 
@@ -460,9 +497,12 @@ extern "C" AEONIAN_PLUGIN_EXPORT int AeonianPluginInit(const AeonianHost* host) 
     return 1;
   }
   map_overlay::ResolveReport report;
-  map_overlay::ResolveAddresses(g_mem, Resolve, nullptr, &g_addr, &report);
-  Say(AEONIAN_LOG_INFO, "MAPDRIVE roteiro com %u linhas; simbolos %u/%u",
-      static_cast<unsigned>(g_script.size()), report.resolved, report.total);
+  const map_overlay::OriginalMemory original(host, g_mem);
+  map_overlay::ResolveAddresses(original, Resolve, nullptr, &g_addr, &report);
+  Say(AEONIAN_LOG_INFO, "MAPDRIVE roteiro com %u linhas; simbolos %u/%u; ato 0x%08x",
+      static_cast<unsigned>(g_script.size()), report.resolved, report.total, g_addr.current_act);
+  const char* hook = std::getenv("AEONIAN_MAPDRIVE_HOOK_DRAW");
+  if (hook != nullptr && hook[0] == '1') HookDrawAutomap(original);
   AeonianEvents events = {};
   events.struct_size = sizeof(events);
   events.on_loaded = OnLoaded;

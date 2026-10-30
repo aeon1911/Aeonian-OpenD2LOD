@@ -92,8 +92,10 @@ struct ResolveReport {
 
 // Resolve os simbolos por nome (resolve devolve 0 se o simbolo nao existe ou
 // se os bytes nao conferem) e le os enderecos dos globais das ancoras. Um
-// simbolo ausente deixa os campos dele em 0.
-void ResolveAddresses(const MemoryView& mem, ResolveFn resolve, void* context,
+// simbolo ausente deixa os campos dele em 0. `anchors` deve dar os bytes
+// ORIGINAIS do jogo (OriginalMemory, em game_memory.h): uma funcao desviada por
+// outro mod tem o jmp dele sobre os bytes verificados.
+void ResolveAddresses(const MemoryView& anchors, ResolveFn resolve, void* context,
                       GameAddresses* out, ResolveReport* report);
 
 // Recursos do mod e os globais de que cada um depende.

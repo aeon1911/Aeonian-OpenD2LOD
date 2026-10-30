@@ -296,7 +296,8 @@ uint32_t ResolveForLogic(void*, const char* name) {
 
 void ResolveSymbols() {
   map_overlay::ResolveReport report;
-  map_overlay::ResolveAddresses(g_mem, ResolveForLogic, nullptr, &g_addr, &report);
+  const map_overlay::OriginalMemory original(g_host, g_mem);
+  map_overlay::ResolveAddresses(original, ResolveForLogic, nullptr, &g_addr, &report);
   g_features = map_overlay::AvailableFeatures(g_addr);
   for (const std::string& name : report.missing) {
     Logf(AEONIAN_LOG_WARN, "simbolo %s nao resolvido (ausente ou bytes nao conferem)",
@@ -305,6 +306,8 @@ void ResolveSymbols() {
   for (const std::string& note : report.notes) Logf(AEONIAN_LOG_WARN, "%s", note.c_str());
   Logf(report.missing.empty() ? AEONIAN_LOG_INFO : AEONIAN_LOG_WARN,
        "simbolos: %u/%u resolvidos", report.resolved, report.total);
+  Logf(AEONIAN_LOG_DEBUG, "ancoras: jogador 0x%08x, ato 0x%08x, unidades 0x%08x, recorte 0x%08x",
+       g_addr.player_unit, g_addr.current_act, g_addr.server_units, g_addr.automap_clip);
   struct {
     uint32_t bit;
     const char* what;
@@ -328,11 +331,13 @@ void InstallDrawHook() {
   if (!g_cfg.draw_hook) return;
   const uintptr_t target = g_host->resolve_symbol(g_host, "D2Client.DrawAutomap");
   if (target == 0) return;  // ja registrado como nao resolvido
-  // Os bytes ja foram conferidos contra o INI por resolve_symbol; a 1a
-  // instrucao precisa ser o cmp [abs32], imm8 (83 3D) que a spec descreve.
+  // Os bytes ORIGINAIS (outro mod pode ja ter desviado a funcao; o motor
+  // encadeia os hooks) ja foram conferidos contra o INI por resolve_symbol; a
+  // 1a instrucao precisa ser o cmp [abs32], imm8 (83 3D) que a spec descreve.
   uint8_t expected[kDrawHookLength];
-  std::memcpy(expected, reinterpret_cast<const void*>(target), sizeof(expected));
-  if (expected[0] != 0x83 || expected[1] != 0x3D) {
+  const map_overlay::OriginalMemory original(g_host, g_mem);
+  if (!original.Read(static_cast<uint32_t>(target), expected, sizeof(expected)) ||
+      expected[0] != 0x83 || expected[1] != 0x3D) {
     Logf(AEONIAN_LOG_WARN, "gancho de DrawAutomap: 1a instrucao inesperada; sem gancho");
     return;
   }

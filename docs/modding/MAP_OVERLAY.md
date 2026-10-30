@@ -63,7 +63,8 @@ por `ae_map_overlay_test`).
 
 - **Símbolos.** O mod resolve 10 símbolos **por nome** (`resolve_symbol`, que
   confere os bytes) e lê o endereço de cada global de dentro dos bytes
-  verificados da âncora (o deslocamento que a descrição do INI dá). Nenhum
+  verificados da âncora (o deslocamento que a descrição do INI dá), sempre com
+  `read_original`: funciona mesmo se outro mod já desviou a função. Nenhum
   endereço está escrito no código. Globais que aparecem em duas âncoras são
   conferidos entre si; divergência zera o global. Símbolo ausente ou com bytes
   diferentes: o log diz qual e o mod desliga só o recurso que depende dele
@@ -89,7 +90,8 @@ por `ae_map_overlay_test`).
   registradores. Serve para desenhar só nos quadros em que o jogo desenhou o
   automap. Depois do desvio os bytes de `DrawAutomap` mudam (o `jmp` cobre a
   âncora em `+2`), mas o motor guarda os originais: outro mod que resolver esse
-  símbolo depois ainda o recebe e lê a âncora com `read_original`
+  símbolo depois ainda o recebe e lê a âncora com `read_original`. Se outro mod
+  desviou antes, o gancho do `map-overlay` encadeia no dele e os dois rodam
   ([`PLUGIN_API.md`](PLUGIN_API.md), "Vários mods na mesma função").
 
 ### D2GL
@@ -121,6 +123,7 @@ automap e grava quadros com `request_screenshot`.
 |---|---|
 | 10/10 símbolos resolvidos, gancho instalado | ✅ suíte, fase A3 |
 | bytes errados num símbolo → só o recurso dele desligado | ✅ suíte, fase A3 |
+| outro mod desvia `DrawAutomap` antes: âncoras certas, ganchos encadeados e marcas na partida | ✅ suíte, fases A3 e E2 |
 | cidade do Ato I: NPCs sobre as cruzes do jogo, waypoint, borda com a Charneca, tela cheia e minimapa | ✅ suíte, fase E (com `AEONIAN_D2_LNG`) e quadros |
 | Charneca Sangrenta: monstros, borda com a cidade, sala do Covil do Mal (aproximada) e depois a entrada exata | ✅ quadros (roteiro `charneca.txt`, manual) |
 | F11 desliga/religa; menu do Esc aberto não mostra marcas | ✅ quadros |

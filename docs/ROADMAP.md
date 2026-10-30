@@ -13,8 +13,8 @@ Feito e validado **no `Game.exe` 1.14d real sob Wine 11 (Linux)**:
   `on_shutdown`) e API de log/símbolos/hook inline/patch;
 - falha segura (build desconhecida; `AEONIAN_DISABLE=1`);
 - testes: `aeonian/tests/core_test.cpp` (host) e
-  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real; 92 checagens com a
-  partida da fase E, 78 sem ela).
+  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real; 116 checagens com a
+  partida das fases E e E2, 92 sem elas).
 
 **Não validado ainda:** Windows nativo; qualquer ambiente tipo Wine-NX/Switch;
 instalação oficial da loja; `-txt`. (A troca de arte foi verificada pelo quadro

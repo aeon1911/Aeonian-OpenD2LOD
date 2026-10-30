@@ -66,7 +66,7 @@ fi
 [[ -n "$D2" && -f "$D2/Game.exe" ]] || skip "defina AEONIAN_D2_DIR (pasta com Game.exe 1.14d)"
 command -v "$WINE" >/dev/null || skip "wine nao encontrado"
 [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] || skip "sem display"
-for f in aeonian.dll ijl11.dll selftest.dll hud.dll map_overlay.dll; do
+for f in aeonian.dll ijl11.dll selftest.dll hud.dll map_overlay.dll mapdrive.dll; do
   [[ -f "$BUILD/$f" ]] || skip "$BUILD/$f ausente; compile antes (cmake --build)"
 done
 
@@ -225,10 +225,24 @@ expect "o mod desliga so os monstros"              '\[map-overlay\] recurso desl
 forbid "o resto do mapa segue ativo"               '\[map-overlay\] .*mod inativo'
 forbid "sem excecoes de 1a chance (mapa, simbolo recusado)" 'excecao de 1a chance'
 cp "$WORK/1.14d.ini.orig" "$ADDR_INI"
-rm -rf "$MODS/map-overlay"
+# Outro mod desviou o DrawAutomap ANTES do map-overlay: as ancoras vem dos bytes
+# originais (read_original) e os dois ganchos encadeiam.
+mkdir -p "$MODS/mapdrive"
+cp "$BUILD/mapdrive.dll" "$MODS/mapdrive/"
+printf 'wait 100\n' >"$MODS/mapdrive/mapdrive.txt"
+printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
+run_game 10 AEONIAN_MAPDRIVE_HOOK_DRAW=1
+expect "outro mod desvia o DrawAutomap primeiro"   'MAPDRIVE desvio proprio em DrawAutomap rc=0'
+expect "funcao desviada: todos os simbolos resolvidos" '\[map-overlay\] simbolos: ([0-9]+)/\1 resolvidos'
+expect "funcao desviada: ancora do ato vem dos originais" '\[map-overlay\] ancoras: jogador 0x007a6a70, ato 0x007a0634, unidades 0x007a5e70, recorte 0x007a51c8'
+expect "funcao desviada: gancho do map-overlay encadeia" '\[map-overlay\] gancho de contagem em DrawAutomap \(0x0045ad60\) instalado'
+forbid "funcao desviada: nenhum recurso do mapa desligado" '\[map-overlay\] recurso desligado'
+forbid "funcao desviada: bytes conferem"           'bytes nao conferem'
+forbid "sem excecoes de 1a chance (funcao desviada)" 'excecao de 1a chance'
+rm -rf "$MODS/map-overlay" "$MODS/mapdrive"
 
 # ----------------------------------- fase E (partida real com o mod de mapa)
-if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" && -f "$BUILD/mapdrive.dll" ]]; then
+if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" ]]; then
   echo "== fase E: partida single player com o mod de mapa (automap nos dois modos)"
   cp "$AEONIAN_D2_LNG" "$GAME/D2.LNG"   # so na copia-espelho
   # Prefixo proprio desta fase, dentro da pasta de trabalho: o personagem de
@@ -246,8 +260,9 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" && -f "$BUILD/mapdrive.
      "$ROOT/aeonian/examples/map-overlay/map-overlay.ini" "$MODS/map-overlay/"
   cp "$BUILD/mapdrive.dll" "$MODS/mapdrive/"
   cp "$HERE/mapdrive-plugin/cidade.txt" "$MODS/mapdrive/mapdrive.txt"
-  # Prioridade maior: resolve os simbolos antes do gancho do map-overlay.
-  printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
+  # Carrega DEPOIS do map-overlay: acha o DrawAutomap ja desviado e tira dele a
+  # ancora do ato, da qual depende para saber que entrou em partida.
+  printf '[mod]\nid = mapdrive\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
   reg_render 1
   write_config '[core]\nlog_level = debug\nextra_args = -w -ns\n[mods]\ndisabled = selftest, hud-demo\n[game]\nskip_intro = true\n'
   rm -f "$MODS/mapdrive/"*.bmp
@@ -266,11 +281,29 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" && -f "$BUILD/mapdrive.
   forbid "sem excecoes de 1a chance (partida)"           'excecao de 1a chance'
   check "quadro da cidade em tela cheia gravado (800x600)" python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" 800 600
   check "quadro da cidade no minimapa gravado (800x600)"   python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e02_cidade_minimapa.bmp" 800 600
+  # Faixa da linha de contagem: ~2800 pixels mudam com as marcas; sem elas, so ruido (<= 20).
+  check "marcas visiveis no quadro (x com a tecla do mod)" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" "$MODS/mapdrive/e01b_cidade_marcas_desligadas.bmp" 200 0 610 18 1000
   mkdir -p "$WORK/quadros-mapa" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa/" 2>/dev/null
+  # O outro mod desvia primeiro: os dois ganchos e a original rodam na partida.
+  echo "== fase E2: partida com o DrawAutomap ja desviado antes do map-overlay"
+  [[ "$SAVES" == "$WORK"/* && -d "$SAVES" ]] && rm -rf "$SAVES"
+  printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
+  rm -f "$MODS/mapdrive/"*.bmp
+  run_game 60 AEONIAN_MAPDRIVE_HOOK_DRAW=1
+  expect "encadeado: personagem criado e partida iniciada" 'MAPDRIVE em partida'
+  expect "encadeado: map-overlay ve a partida (ancora do ato)" '\[map-overlay\] em partida, automap aberto'
+  expect "encadeado: o gancho do map-overlay roda (marcas desenhadas)" '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'
+  expect "encadeado: o desvio anterior tambem roda" 'MAPDRIVE desvio proprio contou [1-9][0-9]* chamadas de DrawAutomap'
+  expect "encadeado: roteiro sem falhas"            'MAPDRIVE roteiro concluido sem falhas'
+  forbid "encadeado: bytes conferem"                'bytes nao conferem'
+  forbid "sem excecoes de 1a chance (encadeado)"    'excecao de 1a chance'
+  check "encadeado: quadro em tela cheia gravado (800x600)" python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" 800 600
+  check "encadeado: marcas visiveis no quadro" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" "$MODS/mapdrive/e01b_cidade_marcas_desligadas.bmp" 200 0 610 18 1000
+  mkdir -p "$WORK/quadros-mapa-encadeado" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa-encadeado/" 2>/dev/null
   rm -rf "$MODS/map-overlay" "$MODS/mapdrive" "$GAME/D2.LNG"
   PREFIX="$PREFIX_MAIN"
 else
-  echo "  SKIP  fase E: partida real (defina AEONIAN_D2_LNG; exige mapdrive.dll)"
+  echo "  SKIP  fase E: partida real (defina AEONIAN_D2_LNG)"
 fi
 
 # --------------------------------------------------------- fase B (D2GL, Glide)

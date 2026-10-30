@@ -183,6 +183,24 @@ void TestAnchorsAgainstRealIni() {
   ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
   CHECK_EQ(AvailableFeatures(a) & kFeatureAutomap, 0u);
 
+  // Funcao desviada: a memoria viva tem o jmp por cima da ancora em +2. Lida
+  // dela, o endereco do ato sairia errado; por isso a ancora vem dos originais
+  // (OriginalMemory). Os demais globais nao mudam.
+  resolver.refuse.clear();
+  const aeonian::Symbol* draw = db->Find("D2Client.DrawAutomap");
+  std::vector<uint8_t> hooked = draw->expect;
+  const uint8_t jmp[7] = {0xE9, 0x11, 0x22, 0x33, 0x44, 0x90, 0x90};
+  std::memcpy(hooked.data(), jmp, sizeof(jmp));
+  FakeMemory live;
+  for (const std::string& name : RequiredSymbols()) {
+    const aeonian::Symbol* s = db->Find(name);
+    live.Map(kImageBase + s->rva, s == draw ? hooked : s->expect);
+  }
+  ResolveAddresses(live, ResolveFromDb, &resolver, &a, &report);
+  CHECK(a.current_act != 0x7A0634u);
+  ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
+  CHECK_EQ(a.current_act, 0x7A0634u);
+
   // Duas ancoras do mesmo global que discordam: o global fica em 0.
   resolver.refuse.clear();
   const aeonian::Symbol* monstats = db->Find("D2Common.MonStatsRecordAccess");

@@ -69,7 +69,7 @@ AEONIAN_D2_LNG=/caminho/D2.LNG \                              # opcional: fase E
 bash aeonian/tests/integration/run_wine_smoke.sh
 ```
 
-A suíte exige display e leva ~3 min (~5 min com a fase E). Com **`AEONIAN_HIDDEN=1`** ela roda dentro
+A suíte exige display e leva ~3 min (~6 min com as fases E e E2). Com **`AEONIAN_HIDDEN=1`** ela roda dentro
 de um `gamescope --backend headless`: **nenhuma janela aparece no monitor** e o
 **som fica desligado** (drivers de áudio do Wine desativados). Use sempre esse
 modo quando o dono estiver usando a máquina. Ela usa **um prefixo Wine de teste**
@@ -96,9 +96,10 @@ do jogo): **não captura a tela**.
   e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
   pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
 - Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
-  dá **99/99** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
-  `AEONIAN_HIDDEN=1`, em 2026-10-29 (eram 92/92 antes das 7 checagens do registro
-  de faixas alteradas, todas nas fases A e A3; 78/78 sem a fase E). A instalação
+  dá **116/116** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
+  `AEONIAN_HIDDEN=1`, em 2026-10-30 (92 sem as fases E e E2, que precisam do
+  `D2.LNG`). A suíte ocupa alguns GB na pasta de trabalho: em `/tmp` (tmpfs) ela já
+  encheu o disco e terminou com `exit=77`. A instalação
   reconstruída não tem `D2.LNG`; o da pasta 1.13c
   (`/mnt/STEAM/Diablo II LoD 1.13c -D2SE/D2.LNG`) serve para a cópia-espelho.
 
@@ -118,12 +119,10 @@ do jogo): **não captura a tela**.
   outra sobreposição dá `AEONIAN_ERR_CONFLICT` (ver
   [`modding/PLUGIN_API.md`](modding/PLUGIN_API.md)). Provas: `core_test`
   (registro) e o selftest na suíte (reresolver `Game.EntryPoint` depois do hook;
-  `DrawAutomap` resolvido pelo selftest com o `map-overlay` carregado).
-  **Pendente:** o `map-overlay`/`map_logic` (e o `mapdrive`) ainda leem as âncoras
-  e o `esperado` do gancho direto da memória. Se outro mod desviar `DrawAutomap`
-  antes dele, o gancho é recusado com segurança, mas o global do ato (âncora em
-  `+2`) seria lido de dentro do `jmp`: devem passar a usar `read_original`. Hoje
-  nenhum outro mod desvia essa função.
+  `DrawAutomap` resolvido pelo selftest com o `map-overlay` carregado). O
+  `map-overlay` e o `mapdrive` leem as âncoras e o `esperado` com `read_original`
+  (`OriginalMemory`, em `examples/map-overlay/game_memory.h`); a suíte cobre outro
+  mod desviar `DrawAutomap` antes deles (fases A3 e E2).
 
 - O D2 grava `Render` em `HKCU\Software\Blizzard Entertainment\Diablo II\VideoConfig`
   na 1ª execução. `Render=1` = GDI. O D2GL só se comporta bem com `Render` ≠ 1
@@ -173,8 +172,8 @@ do jogo): **não captura a tela**.
    `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`. Projeto-irmão do Switch:
    `DIABLO 2 LOD SWITCH PORT` e `medianxl-switch`, na mesma pasta.
 5. **Recompile e rode a suíte** (seção "Como construir e testar"). Referência:
-   66 PASS / 0 FAIL no commit `3089e7c`; 92 PASS / 0 FAIL com o `map-overlay` e a
-   fase E (2026-10-29, ainda sem commit), Wine 11 em Linux.
+   66 PASS / 0 FAIL no commit `3089e7c`; 116 PASS / 0 FAIL com o `map-overlay` e
+   as fases E e E2 (2026-10-30), Wine 11 em Linux.
 6. `build/` e `dist/` não são versionados. Regenere-os: CMake e
    `python3 tools/package.py`.
 7. O histórico da conversa e as memórias do Claude ficam em

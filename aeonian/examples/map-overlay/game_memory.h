@@ -18,16 +18,19 @@
 // logica de map_logic.h. So copia de paginas comprometidas e legiveis; um
 // ponteiro ruim vira "false", nunca uma excecao dentro do jogo. As regioes
 // consultadas ficam num cache curto: chame Reset() a cada passagem (o mapa de
-// memoria muda entre elas).
+// memoria muda entre elas). OriginalMemory le os bytes do jogo como estavam
+// antes de qualquer hook, para as ancoras do banco de enderecos.
 
 #ifndef AEONIAN_EXAMPLES_MAP_OVERLAY_GAME_MEMORY_H_
 #define AEONIAN_EXAMPLES_MAP_OVERLAY_GAME_MEMORY_H_
 
 #include <windows.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
+#include "aeonian/api.h"
 #include "map_logic.h"
 
 namespace map_overlay {
@@ -83,6 +86,27 @@ class GameMemory final : public MemoryView {
   mutable uint32_t end_[kSlots] = {};
   mutable uint32_t count_ = 0;
   mutable uint32_t next_ = 0;
+};
+
+// Ancoras e `expected` de hooks: numa funcao que outro mod desviou, a memoria
+// tem o jmp dele por cima dos bytes verificados. read_original os devolve como
+// eram. Num host sem esse campo nao ha registro de desvios e resolve_symbol
+// conferiu a memoria atual, entao ela serve (`fallback`).
+class OriginalMemory final : public MemoryView {
+ public:
+  OriginalMemory(const AeonianHost* host, const MemoryView& fallback)
+      : host_(host), fallback_(fallback) {}
+  bool Read(uint32_t address, void* out, uint32_t size) const override {
+    if (host_->struct_size <
+        offsetof(AeonianHost, read_original) + sizeof(host_->read_original)) {
+      return fallback_.Read(address, out, size);
+    }
+    return host_->read_original(host_, address, out, size) == AEONIAN_OK;
+  }
+
+ private:
+  const AeonianHost* host_;
+  const MemoryView& fallback_;
 };
 
 }  // namespace map_overlay

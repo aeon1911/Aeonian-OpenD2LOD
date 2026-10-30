@@ -556,7 +556,7 @@ std::vector<std::string> RequiredSymbols() {
   return names;
 }
 
-void ResolveAddresses(const MemoryView& mem, ResolveFn resolve, void* context,
+void ResolveAddresses(const MemoryView& anchors, ResolveFn resolve, void* context,
                       GameAddresses* out, ResolveReport* report) {
   *out = GameAddresses{};
   *report = ResolveReport{};
@@ -579,7 +579,7 @@ void ResolveAddresses(const MemoryView& mem, ResolveFn resolve, void* context,
     if (bases[i] == 0) continue;
     if (std::find(conflicts.begin(), conflicts.end(), a.field) != conflicts.end()) continue;
     uint32_t value = 0;
-    if (!ReadU32(mem, bases[i] + a.offset, &value) || value <= a.delta) {
+    if (!ReadU32(anchors, bases[i] + a.offset, &value) || value <= a.delta) {
       report->notes.push_back(std::string(a.symbol) + ": ancora ilegivel");
       continue;
     }
