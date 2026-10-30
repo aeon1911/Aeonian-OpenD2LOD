@@ -150,8 +150,13 @@ expect "resolve_symbol verifica bytes no binario real" 'resolve_symbol\(Game\.En
 expect "hook inline recusa bytes errados"       'hook_inline com bytes errados .* PASS'
 expect "hook inline desvia e preserva a original" 'hook_inline rc=0 antes=5 depois=50 PASS'
 expect "relocacao de call no codigo real"      'relocacao de call no EntryPoint real .* PASS'
+expect "simbolo desviado ainda resolve (bytes originais)" 'resolve_symbol\(Game\.EntryPoint\) depois do hook=0x00682985 original=1 PASS'
+expect "2o hook no mesmo alvo encadeia"         'hook_inline encadeado rc=0 depois=53 PASS'
+expect "hook/patch sobreposto recusado (conflito)" 'hook/patch sobreposto rc=-6/-6 intacto=1 PASS'
+expect "read_original devolve os bytes de antes do hook" 'read_original do alvo desviado rc=0 PASS'
 expect "janela principal interceptada"          "janela 'Diablo II'"
 expect "on_loaded"                              'SELFTEST on_loaded recebido'
+expect "DrawAutomap resolve e ancora legivel (sem desvio)" 'resolve_symbol\(D2Client\.DrawAutomap\) depois dos plugins=0x0045ad60 desviado=0 ancora=0x007a0634 PASS'
 expect "register_events tardio recusado"       'register_events tardio rc=-2 PASS'
 expect "on_tick"                                'on_tick alcancou 100 PASS'
 expect "on_window_message recebe mensagens do jogo" 'on_window_message recebeu a 1a mensagem do jogo .* PASS'
@@ -204,6 +209,9 @@ expect "map-overlay: todos os simbolos resolvidos" '\[map-overlay\] simbolos: ([
 forbid "nenhum simbolo com bytes divergentes"      'bytes nao conferem'
 forbid "nenhum recurso do mapa desligado"          '\[map-overlay\] recurso desligado'
 expect "gancho de contagem no DrawAutomap"         '\[map-overlay\] gancho de contagem em DrawAutomap \(0x0045ad60\) instalado'
+# Outro mod (o selftest) resolve o DrawAutomap ja desviado pelo map-overlay.
+expect "DrawAutomap desviado ainda resolve para outro mod" 'resolve_symbol\(D2Client\.DrawAutomap\) depois dos plugins=0x0045ad60 desviado=1 ancora=0x007a0634 PASS'
+expect "conferido com os bytes originais do motor" 'simbolo D2Client\.DrawAutomap conferido com os bytes originais \(alterado por map-overlay\)'
 forbid "no menu (fora da partida) nada e desenhado" '\[map-overlay\] em partida'
 forbid "sem excecoes de 1a chance (mapa)"          'excecao de 1a chance'
 # Falha segura: bytes errados num simbolo do banco desligam so o recurso dele.

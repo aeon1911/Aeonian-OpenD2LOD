@@ -15,7 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 // Testes do nucleo portavel do Aeonian (ini, vfs, pe_image, manifesto,
-// banco de enderecos, linha de comando). Rodam no host; nao tocam no jogo.
+// banco de enderecos, linha de comando, registro de faixas alteradas). Rodam
+// no host; nao tocam no jogo.
 
 #include <cstdint>
 #include <cstdio>
@@ -30,6 +31,7 @@
 #include "core/cmdline.h"
 #include "core/ini.h"
 #include "core/mod_manifest.h"
+#include "core/patch_registry.h"
 #include "core/pe_image.h"
 #include "core/vfs.h"
 
@@ -334,6 +336,133 @@ void TestCmdline() {
 
 }  // namespace
 
+// Memoria sintetica para o registro: o "motor" escreve aqui e registra.
+struct FakeMemory {
+  uintptr_t base = 0x1000;
+  std::vector<uint8_t> bytes = std::vector<uint8_t>(0x40, 0xCC);
+
+  uint8_t* At(uintptr_t address) { return bytes.data() + (address - base); }
+  std::vector<uint8_t> Get(uintptr_t address, size_t length) {
+    return std::vector<uint8_t>(At(address), At(address) + length);
+  }
+  // Escreve e registra, como o motor faz; devolve o que havia antes.
+  void Write(PatchRegistry* reg, uintptr_t address,
+             const std::vector<uint8_t>& data, PatchKind kind,
+             const char* owner, uintptr_t detour = 0) {
+    std::vector<uint8_t> before = Get(address, data.size());
+    std::memcpy(At(address), data.data(), data.size());
+    reg->Record(address, before.data(), data.data(), data.size(), kind, owner,
+                detour);
+  }
+};
+
+void TestPatchRegistry() {
+  using Bytes = std::vector<uint8_t>;
+  FakeMemory mem;
+  PatchRegistry reg;
+  // Funcao com uma ancora de dado em +2 (como D2Client.DrawAutomap).
+  const Bytes func = {0x83, 0x3d, 0x34, 0x06, 0x7a, 0x00, 0x00, 0x0f, 0x84};
+  std::memcpy(mem.At(0x1000), func.data(), func.size());
+
+  CHECK(reg.Check(0x1000, 7, PatchKind::kHook, "map") == WriteVerdict::kFree);
+  mem.Write(&reg, 0x1000, {0xe9, 1, 2, 3, 4, 0x90, 0x90}, PatchKind::kHook,
+            "map", 0xD1);
+  CHECK_EQ(reg.ranges().size(), size_t{1});
+
+  // A conferencia de um simbolo ve os bytes originais; a cauda nao alterada
+  // vem da memoria atual.
+  Bytes view = mem.Get(0x1000, func.size());
+  std::string owners;
+  CHECK_EQ(reg.RestoreOriginal(0x1000, view.data(), view.size(), &owners),
+           size_t{7});
+  CHECK(view == func);
+  CHECK_EQ(owners, "map");
+  // Leitura so da ancora, no meio do jmp.
+  Bytes anchor = mem.Get(0x1002, 4);
+  reg.RestoreOriginal(0x1002, anchor.data(), anchor.size());
+  CHECK(anchor == Bytes({0x34, 0x06, 0x7a, 0x00}));
+  // Fora das faixas registradas nada muda.
+  Bytes outside = mem.Get(0x1010, 4);
+  CHECK_EQ(reg.RestoreOriginal(0x1010, outside.data(), outside.size()),
+           size_t{0});
+  CHECK(outside == Bytes(4, 0xCC));
+
+  // Alguem de fora mexeu no desvio: o motor nao responde por esses bytes e a
+  // conferencia falha.
+  mem.At(0x1003)[0] = 0x77;
+  view = mem.Get(0x1000, func.size());
+  CHECK_EQ(reg.RestoreOriginal(0x1000, view.data(), view.size()), size_t{0});
+  CHECK(view != func);
+  mem.At(0x1003)[0] = 2;
+
+  // Segundo hook no mesmo inicio: encadeia (qualquer comprimento).
+  const PatchRange* match = nullptr;
+  CHECK(reg.Check(0x1000, 9, PatchKind::kHook, "outro", &match) ==
+        WriteVerdict::kChain);
+  CHECK(match != nullptr && match->address == 0x1000 && match->detour == 0xD1);
+  const Bytes jump2 = {0xe9, 5, 6, 7, 8};
+  std::memcpy(mem.At(0x1000), jump2.data(), jump2.size());
+  reg.Rechain(0x1000, jump2.data(), jump2.size(), 0xD2, "outro");
+  CHECK_EQ(reg.ranges()[0].detour, uintptr_t{0xD2});
+  CHECK_EQ(reg.ranges()[0].owners, "map > outro");
+  CHECK(reg.ranges()[0].written == Bytes({0xe9, 5, 6, 7, 8, 0x90, 0x90}));
+  view = mem.Get(0x1000, func.size());
+  owners.clear();
+  reg.RestoreOriginal(0x1000, view.data(), view.size(), &owners);
+  CHECK(view == func);
+  CHECK_EQ(owners, "map > outro");
+
+  // Sobreposicao em outro inicio, ou patch sobre o hook: conflito.
+  match = nullptr;
+  CHECK(reg.Check(0x1002, 5, PatchKind::kHook, "x", &match) ==
+        WriteVerdict::kConflict);
+  CHECK(match != nullptr && match->address == 0x1000);
+  CHECK(reg.Check(0x1006, 1, PatchKind::kBytes, "map") ==
+        WriteVerdict::kConflict);
+  CHECK(reg.Check(0x0ffc, 5, PatchKind::kHook, "x") == WriteVerdict::kConflict);
+  // Encostado, sem cruzar: livre.
+  CHECK(reg.Check(0x1007, 5, PatchKind::kHook, "x") == WriteVerdict::kFree);
+  CHECK(reg.Check(0x0ffb, 5, PatchKind::kBytes, "x") == WriteVerdict::kFree);
+
+  // Patches: o mesmo mod pode reescrever os seus; outro mod nao.
+  std::memcpy(mem.At(0x1020), Bytes({1, 2, 3, 4, 5, 6}).data(), 6);
+  mem.Write(&reg, 0x1020, {9, 9, 9, 9}, PatchKind::kBytes, "a");
+  CHECK(reg.Check(0x1022, 4, PatchKind::kBytes, "a") ==
+        WriteVerdict::kOwnBytes);
+  CHECK(reg.Check(0x1022, 4, PatchKind::kBytes, "b") ==
+        WriteVerdict::kConflict);
+  CHECK(reg.Check(0x1020, 5, PatchKind::kHook, "a") == WriteVerdict::kConflict);
+  mem.Write(&reg, 0x1022, {7, 7, 7, 7}, PatchKind::kBytes, "a");
+  CHECK_EQ(reg.ranges().size(), size_t{2});
+  CHECK_EQ(reg.ranges()[1].address, uintptr_t{0x1020});
+  CHECK(reg.ranges()[1].original == Bytes({1, 2, 3, 4, 5, 6}));
+  CHECK(reg.ranges()[1].written == Bytes({9, 9, 7, 7, 7, 7}));
+  view = mem.Get(0x1020, 6);
+  reg.RestoreOriginal(0x1020, view.data(), view.size());
+  CHECK(view == Bytes({1, 2, 3, 4, 5, 6}));
+  // Desfazer o proprio patch tira a faixa do registro.
+  mem.Write(&reg, 0x1020, {1, 2, 3, 4, 5, 6}, PatchKind::kBytes, "a");
+  CHECK_EQ(reg.ranges().size(), size_t{1});
+  CHECK(reg.Check(0x1022, 4, PatchKind::kBytes, "b") == WriteVerdict::kFree);
+
+  // Um patch que liga dois patches do mesmo mod funde os tres.
+  std::memcpy(mem.At(0x1030), Bytes({1, 2, 3, 4, 5, 6}).data(), 6);
+  mem.Write(&reg, 0x1030, {8, 8}, PatchKind::kBytes, "a");
+  mem.Write(&reg, 0x1034, {8, 8}, PatchKind::kBytes, "a");
+  CHECK_EQ(reg.ranges().size(), size_t{3});
+  CHECK(reg.Check(0x1031, 4, PatchKind::kBytes, "a") ==
+        WriteVerdict::kOwnBytes);
+  mem.Write(&reg, 0x1031, {6, 6, 6, 6}, PatchKind::kBytes, "a");
+  CHECK_EQ(reg.ranges().size(), size_t{2});
+  CHECK_EQ(reg.ranges()[1].address, uintptr_t{0x1030});
+  CHECK(reg.ranges()[1].original == Bytes({1, 2, 3, 4, 5, 6}));
+  CHECK(reg.ranges()[1].written == Bytes({8, 6, 6, 6, 6, 8}));
+
+  // Hook no inicio de um hook, mas cruzando tambem um patch: conflito.
+  mem.Write(&reg, 0x1008, {0x90}, PatchKind::kBytes, "a");
+  CHECK(reg.Check(0x1000, 9, PatchKind::kHook, "x") == WriteVerdict::kConflict);
+}
+
 int main() {
   TestIni();
   TestVfs();
@@ -341,6 +470,7 @@ int main() {
   TestManifest();
   TestAddressDb();
   TestCmdline();
+  TestPatchRegistry();
   if (g_failures != 0) {
     std::fprintf(stderr, "%d falha(s)\n", g_failures);
     return 1;

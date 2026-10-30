@@ -21,6 +21,7 @@
 #include <windows.h>
 
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -58,8 +59,15 @@ __asm__(
 
 using TargetFn = int (*)(int);
 TargetFn g_trampoline = nullptr;
+TargetFn g_trampoline2 = nullptr;
 
 int Detour(int x) { return g_trampoline(x) * 10; }
+int Detour2(int x) { return g_trampoline2(x) + 3; }
+
+bool HasReadOriginal() {
+  return g_host->struct_size >=
+         offsetof(AeonianHost, read_original) + sizeof(g_host->read_original);
+}
 
 void TestSymbolResolution() {
   uintptr_t ep = g_host->resolve_symbol(g_host, "Game.EntryPoint");
@@ -97,6 +105,42 @@ void TestInlineHook() {
       ok ? "PASS" : "FAIL");
 }
 
+// Segundo hook no alvo ja desviado por TestInlineHook: encadeia. `expected`
+// continua sendo os bytes ORIGINAIS e o "original" devolvido e o detour
+// anterior. Qualquer outra sobreposicao e recusada sem escrever nada.
+void TestHookChain() {
+  const uintptr_t target = reinterpret_cast<uintptr_t>(&AeSelfTestTarget);
+  const uint8_t original[6] = {0x8b, 0x44, 0x24, 0x04, 0x40, 0xc3};
+  void* tramp = nullptr;
+  int rc = g_host->hook_inline(g_host, target, original, 5,
+                               reinterpret_cast<void*>(&Detour2), &tramp);
+  g_trampoline2 = reinterpret_cast<TargetFn>(tramp);
+  int after = rc == AEONIAN_OK ? AeSelfTestTarget(4) : -1;  // (4+1)*10 + 3
+  bool ok = rc == AEONIAN_OK && tramp == reinterpret_cast<void*>(&Detour) && after == 53;
+  Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "SELFTEST hook_inline encadeado rc=%d depois=%d %s", rc, after, ok ? "PASS" : "FAIL");
+
+  void* ignored = nullptr;
+  const int overlap = g_host->hook_inline(g_host, target + 1, original + 1, 5,
+                                          reinterpret_cast<void*>(&Detour2), &ignored);
+  const uint8_t nop = 0x90;
+  const int patch = g_host->patch_bytes(g_host, target + 2, nullptr, &nop, 1);
+  const bool intact = AeSelfTestTarget(4) == 53;
+  ok = overlap == AEONIAN_ERR_CONFLICT && patch == AEONIAN_ERR_CONFLICT && intact;
+  Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "SELFTEST hook/patch sobreposto rc=%d/%d intacto=%d %s", overlap, patch,
+      intact ? 1 : 0, ok ? "PASS" : "FAIL");
+
+  // A memoria tem o jmp; read_original devolve a funcao como era.
+  uint8_t seen[6] = {};
+  rc = HasReadOriginal() ? g_host->read_original(g_host, target, seen, sizeof(seen))
+                         : AEONIAN_ERR_UNSUPPORTED;
+  ok = rc == AEONIAN_OK && std::memcmp(seen, original, sizeof(seen)) == 0 &&
+       *reinterpret_cast<const uint8_t*>(target) == 0xE9;
+  Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "SELFTEST read_original do alvo desviado rc=%d %s", rc, ok ? "PASS" : "FAIL");
+}
+
 // Valida a correcao do `call rel32` copiado para o trampolim sobre os bytes
 // REAIS do entry point do Game.exe (sem executa-lo): o destino decodificado do
 // trampolim deve ser igual ao do original.
@@ -125,6 +169,40 @@ void TestRealCodeRelocation() {
   Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
       "SELFTEST relocacao de call no EntryPoint real (destino 0x%08lx) %s",
       static_cast<unsigned long>(original_destination), ok ? "PASS" : "FAIL");
+
+  // O EntryPoint agora comeca com o jmp do hook, mas o simbolo continua
+  // resolvendo: o motor confere o banco com os bytes originais.
+  const uintptr_t again = g_host->resolve_symbol(g_host, "Game.EntryPoint");
+  uint8_t seen[5] = {};
+  const int read = HasReadOriginal() ? g_host->read_original(g_host, ep, seen, sizeof(seen))
+                                     : AEONIAN_ERR_UNSUPPORTED;
+  const bool same = read == AEONIAN_OK && std::memcmp(seen, head, sizeof(seen)) == 0;
+  ok = rc == AEONIAN_OK && original[0] == 0xE9 && again == ep && same;
+  Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "SELFTEST resolve_symbol(Game.EntryPoint) depois do hook=0x%08lx original=%d %s",
+      static_cast<unsigned long>(again), same ? 1 : 0, ok ? "PASS" : "FAIL");
+}
+
+// Roda depois da inicializacao de TODOS os plugins: com o mod de mapa
+// carregado, D2Client.DrawAutomap ja esta desviado por ele. O simbolo deve
+// resolver e a ancora de dado em +2 ([0x7A0634], ver
+// docs/specs/game-exe-1.14d-levels-automap.md) vir dos bytes originais.
+void TestResolveAfterOtherMods() {
+  const uintptr_t draw = g_host->resolve_symbol(g_host, "D2Client.DrawAutomap");
+  uint8_t head[7] = {};
+  const int rc = draw != 0 && HasReadOriginal()
+                     ? g_host->read_original(g_host, draw, head, sizeof(head))
+                     : AEONIAN_ERR_MISMATCH;
+  uint32_t anchor = 0;
+  std::memcpy(&anchor, head + 2, sizeof(anchor));
+  const bool diverted = draw != 0 && *reinterpret_cast<const uint8_t*>(draw) == 0xE9;
+  const bool ok = draw == g_host->game_base + 0x5ad60 && rc == AEONIAN_OK &&
+                  head[0] == 0x83 && head[1] == 0x3d && anchor == 0x007a0634;
+  Say(ok ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "SELFTEST resolve_symbol(D2Client.DrawAutomap) depois dos plugins=0x%08lx "
+      "desviado=%d ancora=0x%08lx %s",
+      static_cast<unsigned long>(draw), diverted ? 1 : 0,
+      static_cast<unsigned long>(anchor), ok ? "PASS" : "FAIL");
 }
 
 DWORD g_loaded_ms = 0;
@@ -158,6 +236,7 @@ void DriveToMenu() {
 void OnLoaded(void*) {
   g_loaded_ms = GetTickCount();
   Say(AEONIAN_LOG_INFO, "SELFTEST on_loaded recebido");
+  TestResolveAfterOtherMods();
   // register_events fora de AeonianPluginInit tem de ser recusado.
   AeonianEvents late = {};
   late.struct_size = sizeof(late);
@@ -236,6 +315,7 @@ extern "C" AEONIAN_PLUGIN_EXPORT int AeonianPluginInit(const AeonianHost* host) 
       static_cast<unsigned long>(host->game_base), host->struct_size);
   TestSymbolResolution();
   TestInlineHook();
+  TestHookChain();
   TestRealCodeRelocation();
 
   AeonianEvents events = {};

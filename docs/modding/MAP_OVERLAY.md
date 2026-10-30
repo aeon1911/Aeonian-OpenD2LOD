@@ -87,8 +87,10 @@ por `ae_map_overlay_test`).
   instrução (sem operando relativo, como a spec recomenda); o desvio só
   incrementa um contador e segue para a original, sem tocar em pilha nem
   registradores. Serve para desenhar só nos quadros em que o jogo desenhou o
-  automap. Efeito colateral: depois do desvio os bytes de `DrawAutomap` mudam, e
-  um mod que resolver esse símbolo **depois** recebe 0 (use prioridade maior).
+  automap. Depois do desvio os bytes de `DrawAutomap` mudam (o `jmp` cobre a
+  âncora em `+2`), mas o motor guarda os originais: outro mod que resolver esse
+  símbolo depois ainda o recebe e lê a âncora com `read_original`
+  ([`PLUGIN_API.md`](PLUGIN_API.md), "Vários mods na mesma função").
 
 ### D2GL
 

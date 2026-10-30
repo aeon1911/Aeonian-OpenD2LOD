@@ -92,7 +92,8 @@ int ApiHookInline(const AeonianHost* host, uintptr_t target,
                   const uint8_t* expected, uint32_t length, void* detour,
                   void** trampoline) {
   if (host == nullptr) return AEONIAN_ERR_ARGUMENT;
-  int rc = InstallInlineHook(target, expected, length, detour, trampoline);
+  int rc = InstallInlineHook(target, expected, length, detour, trampoline,
+                             Self(host).mod_id.c_str());
   if (rc != AEONIAN_OK) {
     log::Writef(log::Level::kWarn, "[%s] hook_inline(0x%08lx) falhou: %d",
                 Self(host).mod_id.c_str(), static_cast<unsigned long>(target),
@@ -105,7 +106,14 @@ int ApiPatchBytes(const AeonianHost* host, uintptr_t target,
                   const uint8_t* expected, const uint8_t* replacement,
                   uint32_t length) {
   if (host == nullptr) return AEONIAN_ERR_ARGUMENT;
-  return PatchBytes(target, expected, replacement, length);
+  return PatchBytes(target, expected, replacement, length,
+                    Self(host).mod_id.c_str());
+}
+
+int ApiReadOriginal(const AeonianHost* host, uintptr_t address, void* out,
+                    uint32_t length) {
+  if (host == nullptr) return AEONIAN_ERR_ARGUMENT;
+  return ReadOriginal(address, static_cast<uint8_t*>(out), length, nullptr);
 }
 
 int ApiRequestScreenshot(const AeonianHost* host, const char* path) {
@@ -355,6 +363,7 @@ bool Runtime::LoadPlugin(const ModManifest& mod, const std::string& relative) {
   host.request_screenshot = ApiRequestScreenshot;
   host.mod_count = ApiModCount;
   host.mod_info = ApiModInfo;
+  host.read_original = ApiReadOriginal;
 
   registering_ = plugin.get();
   int rc = init(&host);
@@ -621,13 +630,22 @@ uintptr_t Runtime::ResolveSymbol(const char* name) const {
   if (symbol == nullptr) return 0;
   const uintptr_t address = game_base_ + symbol->rva;
   if (symbol->expect.empty()) return address;
+  // Confere contra os bytes ORIGINAIS: se um mod ja desviou a funcao
+  // (hook_inline/patch_bytes), o motor sabe o que estava la. Fora das faixas
+  // que o proprio motor alterou, vale a memoria atual.
   const uint32_t length = static_cast<uint32_t>(symbol->expect.size());
-  if (!IsReadable(address, length) ||
-      std::memcmp(reinterpret_cast<const void*>(address), symbol->expect.data(),
-                  length) != 0) {
+  std::vector<uint8_t> current(length);
+  std::string owners;
+  if (ReadOriginal(address, current.data(), length, &owners) != AEONIAN_OK ||
+      current != symbol->expect) {
     log::Writef(log::Level::kWarn, "simbolo %s: bytes nao conferem em 0x%08lx",
                 name, static_cast<unsigned long>(address));
     return 0;
+  }
+  if (!owners.empty()) {
+    log::Writef(log::Level::kDebug,
+                "simbolo %s conferido com os bytes originais (alterado por %s)",
+                name, owners.c_str());
   }
   return address;
 }

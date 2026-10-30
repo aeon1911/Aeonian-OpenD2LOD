@@ -19,8 +19,11 @@
 #include <windows.h>
 
 #include <cstring>
+#include <string_view>
+#include <vector>
 
 #include "aeonian/api.h"
+#include "core/patch_registry.h"
 #include "host/log.h"
 
 static_assert(sizeof(void*) == 4, "o Aeonian mira o Game.exe de 32 bits");
@@ -53,6 +56,60 @@ bool WriteCode(uintptr_t target, const uint8_t* bytes, uint32_t length) {
   return true;
 }
 
+// Faixas alteradas pelo motor. Escritas (hook/patch) em modo exclusivo,
+// leituras (ReadOriginal, de qualquer thread) em modo compartilhado. Nunca
+// destruido: pode ser consultado ate o fim do processo.
+SRWLOCK g_registry_lock = SRWLOCK_INIT;
+
+PatchRegistry& Registry() {
+  static PatchRegistry* registry = new PatchRegistry();
+  return *registry;
+}
+
+class RegistryWriter {
+ public:
+  RegistryWriter() { AcquireSRWLockExclusive(&g_registry_lock); }
+  ~RegistryWriter() { ReleaseSRWLockExclusive(&g_registry_lock); }
+  RegistryWriter(const RegistryWriter&) = delete;
+  RegistryWriter& operator=(const RegistryWriter&) = delete;
+};
+
+std::string_view OwnerOf(const char* owner) {
+  return owner != nullptr ? owner : "?";
+}
+
+void LogConflict(const char* what, uintptr_t target, const PatchRange& other) {
+  log::Writef(log::Level::kWarn,
+              "%s em 0x%08lx recusado: cruza 0x%08lx..0x%08lx, ja alterado "
+              "por %s (%s)",
+              what, static_cast<unsigned long>(target),
+              static_cast<unsigned long>(other.address),
+              static_cast<unsigned long>(other.end()), other.owners.c_str(),
+              other.kind == PatchKind::kHook ? "hook" : "patch");
+}
+
+// Segundo hook no mesmo alvo. O hook anterior ja leva `target` ao detour
+// dele, que tem a convencao da funcao: esse detour vira o "original" do novo
+// hook e so o rel32 do jmp muda. Os trampolins anteriores seguem validos.
+int ChainHook(uintptr_t target, const PatchRange& hooked, void* detour,
+              void** trampoline, std::string_view owner) {
+  void* previous = reinterpret_cast<void*>(hooked.detour);
+  uint8_t jump[5];
+  jump[0] = kOpJmpRel32;
+  WriteRel32(jump + 1, static_cast<uint32_t>(target) + 5,
+             static_cast<uint32_t>(reinterpret_cast<uintptr_t>(detour)));
+  if (!WriteCode(target, jump, sizeof(jump))) return AEONIAN_ERR_MEMORY;
+  Registry().Rechain(target, jump, sizeof(jump),
+                     reinterpret_cast<uintptr_t>(detour), owner);
+  *trampoline = previous;
+  log::Writef(log::Level::kInfo,
+              "hook inline encadeado: alvo 0x%08lx -> detour %p, que chama o "
+              "anterior %p (%s)",
+              static_cast<unsigned long>(target), detour, previous,
+              hooked.owners.c_str());
+  return AEONIAN_OK;
+}
+
 }  // namespace
 
 bool IsReadable(uintptr_t address, uint32_t length) {
@@ -75,12 +132,22 @@ bool IsReadable(uintptr_t address, uint32_t length) {
 }
 
 int PatchBytes(uintptr_t target, const uint8_t* expected,
-               const uint8_t* replacement, uint32_t length) {
+               const uint8_t* replacement, uint32_t length, const char* owner) {
   if (target == 0 || replacement == nullptr || length == 0 ||
-      length > 4096) {
+      length > kMaxPatchLength) {
     return AEONIAN_ERR_ARGUMENT;
   }
   if (!IsReadable(target, length)) return AEONIAN_ERR_MEMORY;
+  const std::string_view who = OwnerOf(owner);
+  RegistryWriter guard;
+  const PatchRange* other = nullptr;
+  if (Registry().Check(target, length, PatchKind::kBytes, who, &other) ==
+      WriteVerdict::kConflict) {
+    LogConflict("patch", target, *other);
+    return AEONIAN_ERR_CONFLICT;
+  }
+  // Sobre patches do proprio mod a conferencia e com a memoria atual: ele
+  // sabe o que escreveu (ex.: desfazer o proprio patch).
   if (expected != nullptr &&
       std::memcmp(reinterpret_cast<const void*>(target), expected, length) !=
           0) {
@@ -89,26 +156,50 @@ int PatchBytes(uintptr_t target, const uint8_t* expected,
                 static_cast<unsigned long>(target));
     return AEONIAN_ERR_MISMATCH;
   }
-  return WriteCode(target, replacement, length) ? AEONIAN_OK
-                                                : AEONIAN_ERR_MEMORY;
+  std::vector<uint8_t> before(length);
+  std::memcpy(before.data(), reinterpret_cast<const void*>(target), length);
+  if (!WriteCode(target, replacement, length)) return AEONIAN_ERR_MEMORY;
+  Registry().Record(target, before.data(), replacement, length,
+                    PatchKind::kBytes, who);
+  return AEONIAN_OK;
 }
 
 int InstallInlineHook(uintptr_t target, const uint8_t* expected,
-                      uint32_t length, void* detour, void** trampoline) {
+                      uint32_t length, void* detour, void** trampoline,
+                      const char* owner) {
   if (target == 0 || expected == nullptr || detour == nullptr ||
       trampoline == nullptr || length < kMinHookLength ||
       length > kMaxHookLength) {
     return AEONIAN_ERR_ARGUMENT;
   }
   if (!IsReadable(target, length)) return AEONIAN_ERR_MEMORY;
-  // Verificacao ANTES de qualquer escrita: numa build diferente a funcao tem
-  // outros bytes e o hook e recusado em vez de corromper o jogo.
-  if (std::memcmp(reinterpret_cast<const void*>(target), expected, length) !=
-      0) {
+  const std::string_view who = OwnerOf(owner);
+  RegistryWriter guard;
+  const PatchRange* hooked = nullptr;
+  const WriteVerdict verdict =
+      Registry().Check(target, length, PatchKind::kHook, who, &hooked);
+  if (verdict == WriteVerdict::kConflict) {
+    LogConflict("hook", target, *hooked);
+    return AEONIAN_ERR_CONFLICT;
+  }
+  // Verificacao ANTES de qualquer escrita, contra os bytes ORIGINAIS: numa
+  // build diferente a funcao tem outros bytes e o hook e recusado em vez de
+  // corromper o jogo; num alvo ja desviado a memoria tem o jmp anterior.
+  uint8_t current[kMaxHookLength];
+  std::memcpy(current, reinterpret_cast<const void*>(target), length);
+  Registry().RestoreOriginal(target, current, length);
+  if (std::memcmp(current, expected, length) != 0) {
     log::Writef(log::Level::kWarn,
-                "hook em 0x%08lx recusado: bytes esperados nao conferem",
-                static_cast<unsigned long>(target));
+                "hook em 0x%08lx recusado: bytes esperados nao conferem%s",
+                static_cast<unsigned long>(target),
+                verdict == WriteVerdict::kChain
+                    ? " com os originais (alvo ja desviado: passe os bytes "
+                      "da spec ou de read_original)"
+                    : "");
     return AEONIAN_ERR_MISMATCH;
+  }
+  if (verdict == WriteVerdict::kChain) {
+    return ChainHook(target, *hooked, detour, trampoline, who);
   }
 
   // Trampolim = copia dos bytes originais + `jmp target+length`. Escrito
@@ -150,10 +241,26 @@ int InstallInlineHook(uintptr_t target, const uint8_t* expected,
     VirtualFree(tramp, 0, MEM_RELEASE);
     return AEONIAN_ERR_MEMORY;
   }
+  Registry().Record(target, expected, patch, length, PatchKind::kHook, who,
+                    reinterpret_cast<uintptr_t>(detour));
   *trampoline = tramp;
   log::Writef(log::Level::kInfo,
               "hook inline instalado: alvo 0x%08lx (%u bytes) -> detour %p",
               static_cast<unsigned long>(target), length, detour);
+  return AEONIAN_OK;
+}
+
+int ReadOriginal(uintptr_t address, uint8_t* out, uint32_t length,
+                 std::string* owners) {
+  if (address == 0 || out == nullptr || length == 0 ||
+      length > kMaxPatchLength) {
+    return AEONIAN_ERR_ARGUMENT;
+  }
+  if (!IsReadable(address, length)) return AEONIAN_ERR_MEMORY;
+  AcquireSRWLockShared(&g_registry_lock);
+  std::memcpy(out, reinterpret_cast<const void*>(address), length);
+  Registry().RestoreOriginal(address, out, length, owners);
+  ReleaseSRWLockShared(&g_registry_lock);
   return AEONIAN_OK;
 }
 

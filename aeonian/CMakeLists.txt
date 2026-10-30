@@ -35,12 +35,13 @@ if(NOT TARGET ae_warnings)
 endif()
 
 # Nucleo portavel: INI, VFS, PE, manifesto, banco de enderecos, linha de
-# comando. Nenhuma chamada Win32.
+# comando, registro de faixas alteradas. Nenhuma chamada Win32.
 add_library(ae_core STATIC
     core/address_db.cpp
     core/cmdline.cpp
     core/ini.cpp
     core/mod_manifest.cpp
+    core/patch_registry.cpp
     core/pe_image.cpp
     core/vfs.cpp)
 target_include_directories(ae_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

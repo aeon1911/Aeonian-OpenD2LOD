@@ -55,6 +55,7 @@ extern "C" {
 #define AEONIAN_ERR_MISMATCH (-3)   /* bytes esperados nao conferem */
 #define AEONIAN_ERR_MEMORY (-4)     /* falha de protecao/alocacao */
 #define AEONIAN_ERR_UNSUPPORTED (-5)
+#define AEONIAN_ERR_CONFLICT (-6)   /* faixa ja alterada por outro hook/patch */
 
 typedef enum AeonianLogLevel {
   AEONIAN_LOG_DEBUG = 0,
@@ -152,7 +153,11 @@ struct AeonianHost {
   int (*register_events)(const AeonianHost* host, const AeonianEvents* events);
 
   /* Endereco absoluto de um simbolo do banco de enderecos da build atual, ou
-   * 0 se desconhecido OU se os bytes esperados nao conferem. */
+   * 0 se desconhecido OU se os bytes esperados nao conferem. A conferencia e
+   * com os bytes ORIGINAIS: um simbolo que outro mod ja desviou (hook_inline
+   * ou patch_bytes) continua resolvendo. Para LER bytes do alvo (ancoras de
+   * dados, `expected` de um hook) use read_original, nunca a memoria direta:
+   * numa funcao desviada ela tem o jmp do hook. */
   uintptr_t (*resolve_symbol)(const AeonianHost* host, const char* name);
 
   /* Desvia a funcao em `target` para `detour`. `expected`/`length` (5..32)
@@ -160,13 +165,19 @@ struct AeonianHost {
    * escrita). Esses bytes sao copiados para um trampolim devolvido em
    * `*trampoline` (chame-o para executar a funcao original). O primeiro
    * byte pode ser um E8/E9 relativo (e ajustado); os demais precisam ser
-   * independentes de posicao. Faca isto durante AeonianPluginInit. */
+   * independentes de posicao. Faca isto durante AeonianPluginInit.
+   * Alvo ja desviado por outro hook no MESMO endereco: os hooks encadeiam
+   * (`expected` continua sendo os bytes originais; `*trampoline` recebe o
+   * detour anterior, que acaba chamando a original). Qualquer outra
+   * sobreposicao (comecar dentro da faixa de outro hook, cruzar um patch):
+   * AEONIAN_ERR_CONFLICT, sem escrever nada. */
   int (*hook_inline)(const AeonianHost* host, uintptr_t target,
                      const uint8_t* expected, uint32_t length, void* detour,
                      void** trampoline);
 
   /* Sobrescreve `length` bytes em `target`, so se `expected` (opcional, pode
-   * ser NULL) conferir. */
+   * ser NULL) conferir com a memoria atual. Cruzar um hook ou um patch de
+   * outro mod: AEONIAN_ERR_CONFLICT. */
   int (*patch_bytes)(const AeonianHost* host, uintptr_t target,
                      const uint8_t* expected, const uint8_t* replacement,
                      uint32_t length);
@@ -179,6 +190,13 @@ struct AeonianHost {
   /* Mods carregados, na ordem de carga (maior prioridade primeiro). */
   uint32_t (*mod_count)(const AeonianHost* host);
   int (*mod_info)(const AeonianHost* host, uint32_t index, AeonianModInfo* out);
+
+  /* Copia `length` (1..4096) bytes de `address` para `out` como estavam
+   * antes de qualquer hook_inline/patch_bytes: as faixas que o Aeonian
+   * alterou voltam aos bytes originais; o resto e a memoria atual. Confira
+   * `struct_size` antes de usar (campo acrescentado depois de mod_info). */
+  int (*read_original)(const AeonianHost* host, uintptr_t address, void* out,
+                       uint32_t length);
 };
 
 /* Assinatura e nome do ponto de entrada exportado por cada plugin. Retorne 0

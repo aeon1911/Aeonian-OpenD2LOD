@@ -96,8 +96,10 @@ do jogo): **não captura a tela**.
   e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
   pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
 - Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
-  dá **92/92** com o D2GL oficial e `AEONIAN_D2_LNG` (78/78 sem a fase E), em
-  2026-10-29. A instalação reconstruída não tem `D2.LNG`; o da pasta 1.13c
+  dá **99/99** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
+  `AEONIAN_HIDDEN=1`, em 2026-10-29 (eram 92/92 antes das 7 checagens do registro
+  de faixas alteradas, todas nas fases A e A3; 78/78 sem a fase E). A instalação
+  reconstruída não tem `D2.LNG`; o da pasta 1.13c
   (`/mnt/STEAM/Diablo II LoD 1.13c -D2SE/D2.LNG`) serve para a cópia-espelho.
 
 ## Notas de ambiente (Wine) descobertas
@@ -108,8 +110,20 @@ do jogo): **não captura a tela**.
   (por isso o comando `ensuremode`). Fora da cidade do Ato I o mapa muda a cada
   partida; andar até a Charneca é heurístico (roteiro `charneca.txt`, manual).
 - **Ganchos e `resolve_symbol`:** depois que um mod desvia uma função, os bytes
-  dela mudam e quem resolver aquele símbolo depois recebe 0 (visto com
-  `D2Client.DrawAutomap`). Hoje a ordem de carga (prioridade) resolve.
+  dela mudam. Até 2026-10-29 quem resolvia aquele símbolo depois recebia 0 (visto
+  com `D2Client.DrawAutomap`). Agora o motor guarda os bytes originais de tudo o
+  que `hook_inline`/`patch_bytes` escrevem (`core/patch_registry.h`) e
+  `resolve_symbol` confere o banco contra eles; `read_original` (API) devolve
+  esses bytes para âncoras de dados. Segundo hook no mesmo endereço **encadeia**;
+  outra sobreposição dá `AEONIAN_ERR_CONFLICT` (ver
+  [`modding/PLUGIN_API.md`](modding/PLUGIN_API.md)). Provas: `core_test`
+  (registro) e o selftest na suíte (reresolver `Game.EntryPoint` depois do hook;
+  `DrawAutomap` resolvido pelo selftest com o `map-overlay` carregado).
+  **Pendente:** o `map-overlay`/`map_logic` (e o `mapdrive`) ainda leem as âncoras
+  e o `esperado` do gancho direto da memória. Se outro mod desviar `DrawAutomap`
+  antes dele, o gancho é recusado com segurança, mas o global do ato (âncora em
+  `+2`) seria lido de dentro do `jmp`: devem passar a usar `read_original`. Hoje
+  nenhum outro mod desvia essa função.
 
 - O D2 grava `Render` em `HKCU\Software\Blizzard Entertainment\Diablo II\VideoConfig`
   na 1ª execução. `Render=1` = GDI. O D2GL só se comporta bem com `Render` ≠ 1

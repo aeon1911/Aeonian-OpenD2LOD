@@ -38,13 +38,17 @@ i686 — ver `README.md`).
 | `game_dir`, `mod_dir`, `mod_id` | pastas/ids (strings válidas durante todo o processo) |
 | `log(host, nível, msg)` | escreve em `aeonian.log` com o prefixo `[mod_id]` |
 | `register_events(host, ev)` | registra callbacks; **só** dentro de `AeonianPluginInit` (depois: `AEONIAN_ERR_STATE`) |
-| `resolve_symbol(host, "Game.EntryPoint")` | endereço absoluto de um símbolo do banco de endereços, ou `0` se desconhecido **ou** se os bytes esperados não conferem |
+| `resolve_symbol(host, "Game.EntryPoint")` | endereço absoluto de um símbolo do banco de endereços, ou `0` se desconhecido **ou** se os bytes esperados não conferem com os bytes **originais** (um símbolo que outro mod já desviou continua resolvendo; ver abaixo) |
 | `hook_inline(host, alvo, esperado, n, detour, &trampolim)` | desvia a função em `alvo`; ver abaixo |
-| `patch_bytes(host, alvo, esperado|NULL, novos, n)` | sobrescreve `n` bytes (só se `esperado` conferir) |
+| `patch_bytes(host, alvo, esperado|NULL, novos, n)` | sobrescreve `n` bytes (só se `esperado` conferir com a memória atual); recusa com `AEONIAN_ERR_CONFLICT` se cruzar um hook ou um patch de outro mod |
 | `request_screenshot(host, "x.bmp")` | grava o **próximo quadro** (já com os overlays) como BMP de 24 bits; lê só a superfície/framebuffer do **jogo**, nunca a área de trabalho |
 | `mod_count(host)`, `mod_info(host, i, &info)` | lista os mods carregados (id, nome, versão, autor, prioridade, nº de arquivos em `data\`, nº de plugins) |
+| `read_original(host, endereço, saída, n)` | copia `n` (1–4096) bytes **como estavam antes** de qualquer `hook_inline`/`patch_bytes`: as faixas que o motor alterou voltam aos originais, o resto é a memória atual. Campo novo: confira `struct_size` antes de usar |
 
-Retorno das funções `int`: `AEONIAN_OK` (0) ou `AEONIAN_ERR_*` (negativos).
+Retorno das funções `int`: `AEONIAN_OK` (0) ou `AEONIAN_ERR_*` (negativos):
+`ARGUMENT` (-1), `STATE` (-2, fora do momento permitido), `MISMATCH` (-3, bytes
+esperados não conferem), `MEMORY` (-4), `UNSUPPORTED` (-5) e `CONFLICT` (-6, a faixa
+já foi alterada por outro hook/patch de um jeito que não dá para combinar).
 `AeonianPluginInit` retornando ≠ 0 descarrega o plugin.
 
 ## Eventos (`AeonianEvents`)
@@ -104,8 +108,38 @@ Regras (violá-las trava o jogo):
   exceto que o **primeiro** byte pode ser um `E8`/`E9` relativo (é ajustado).
 - A convenção de chamada do detour deve ser a **mesma da função alvo**.
 - Instale durante `AeonianPluginInit` (o jogo ainda é de uma thread só).
-- Se os bytes em `alvo` ≠ `esperado`, retorna `AEONIAN_ERR_MISMATCH` e **não
-  escreve nada**: trate como "esta build não é suportada".
+- `esperado` são os bytes **originais** da função (os da spec / do banco), mesmo
+  que outro mod já a tenha desviado. Se não conferem, retorna
+  `AEONIAN_ERR_MISMATCH` e **não escreve nada**: trate como "esta build não é
+  suportada".
+- **Nunca** copie `esperado` da memória (`memcpy(esperado, alvo, n)`): numa função
+  já desviada ela começa com o `jmp` do outro hook. Use as constantes da spec ou
+  `read_original`.
+
+### Vários mods na mesma função
+
+O motor guarda os bytes originais de toda faixa que ele mesmo alterou
+(`hook_inline` e `patch_bytes`). Com isso:
+
+- **`resolve_symbol`** confere o banco contra os bytes originais: um símbolo
+  desviado por outro mod **continua resolvendo**, em qualquer ordem de carga. Fora
+  dessas faixas vale a memória atual; se algo de fora do motor mexeu no desvio,
+  a conferência falha (0, "bytes nao conferem") como antes.
+- **Âncoras de dados** (o endereço de um global dentro dos bytes verificados)
+  devem ser lidas com **`read_original`**, não direto da memória: em
+  `D2Client.DrawAutomap`, por exemplo, o global em `+2` fica embaixo do `jmp` que
+  o `map-overlay` instala.
+- **Segundo `hook_inline` no mesmo endereço: os hooks encadeiam.** O motor
+  confere `esperado` contra os originais, troca o destino do `jmp` para o novo
+  detour e devolve em `*trampolim` o **detour anterior** (que tem a mesma
+  convenção da função e acaba chamando a original). O último a instalar roda
+  primeiro: `novo → anterior → … → original`. Nada é desinstalado depois.
+- **Qualquer outra sobreposição é recusada** com `AEONIAN_ERR_CONFLICT`, sem
+  escrever nada: hook que começa **dentro** da faixa de outro hook, hook que cruza
+  um patch, patch que cruza um hook, patch que cruza o patch de **outro** mod. O
+  log diz a faixa e quem a alterou. Sobre os **próprios** patches o mod pode
+  reescrever (e desfazer: um patch que volta aos bytes originais sai do registro);
+  aí `esperado` confere com a memória atual.
 
 Símbolos disponíveis hoje: 45 em [`addresses/1.14d.ini`](../../aeonian/addresses/1.14d.ini)
 — `Game.EntryPoint` (âncora de teste) e os de estado do jogo (unidades, níveis,
@@ -118,12 +152,12 @@ está dentro dos bytes verificados, no deslocamento que a descrição do símbol
 contribuição de dados + spec — ver [`../ROADMAP.md`](../ROADMAP.md) e
 [`../specs/game-exe-1.14d-hooking-surface.md`](../specs/game-exe-1.14d-hooking-surface.md).
 
-> **Símbolo desviado por outro mod.** `resolve_symbol` confere os bytes **atuais**
-> do alvo. Depois que um plugin desvia uma função (`hook_inline`), os primeiros
-> bytes dela mudam e quem resolver o mesmo símbolo **depois** recebe 0 (e o log
-> diz "bytes nao conferem"). Resolva os símbolos em `AeonianPluginInit`; se o seu
-> mod depende de um símbolo que outro mod desvia, dê a ele `priority` maior (carrega
-> antes). Exemplo: o `map-overlay` desvia `D2Client.DrawAutomap`.
+> **Símbolo desviado por outro mod.** Até 2026-10-29 `resolve_symbol` conferia os
+> bytes **atuais** e devolvia 0 para quem resolvesse uma função depois de outro mod
+> desviá-la (visto com `D2Client.DrawAutomap`, desviado pelo `map-overlay`); a
+> saída era dar `priority` maior a quem lê. Hoje a conferência é com os bytes
+> originais (seção acima) e a ordem de carga não importa mais para isso. Ainda
+> assim, se o seu mod lê âncoras direto da memória, prefira `read_original`.
 
 ## Compatibilidade
 
