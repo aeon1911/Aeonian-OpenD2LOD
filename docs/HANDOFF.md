@@ -14,15 +14,10 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 
 - Repositório: `/mnt/STEAM/Projetos/Aeonian-OpenD2LOD` (host atual, CachyOS); remoto `origin` =
   `https://github.com/aeon1911/Aeonian-OpenD2LOD.git`.
-- O trabalho do Aeonian está na branch **`claude/diablo2-lod-open-source-a87cb5`**
-  (worktree em `.claude/worktrees/diablo2-lod-open-source-a87cb5`):
-  `f54a1b9` (pivot para ponto de entrada de mods) → `3089e7c` (`on_present`, D2GL,
-  `skip_intro`, pacote de teste) → o commit de handoff que vem depois.
-- A `main` **local** foi posta no mesmo commit desta branch (`e6e12f3`) em
-  2026-10-29, por ordem do dono. A `origin/main` no GitHub ainda aponta para a
-  reimplementação (`9686591`) até um push.
-- As tags `v0.1.0-demo` … `v1.0.1-vendors` (código da reimplementação) foram
-  apagadas localmente.
+- Todo o trabalho está na **`main`**, a única branch, local e no GitHub.
+- O histórico foi **reescrito em 2026-10-30**, por ordem do dono, para apagar a
+  reimplementação: o código, as tags e as branches dela saíram. O commit-raiz
+  reúne a base do ponto de entrada; hashes anteriores a essa data não valem mais.
 
 ## Estado
 
@@ -172,8 +167,8 @@ do jogo): **não captura a tela**.
    `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`. Projeto-irmão do Switch:
    `DIABLO 2 LOD SWITCH PORT` e `medianxl-switch`, na mesma pasta.
 5. **Recompile e rode a suíte** (seção "Como construir e testar"). Referência:
-   66 PASS / 0 FAIL no commit `3089e7c`; 116 PASS / 0 FAIL com o `map-overlay` e
-   as fases E e E2 (2026-10-30), Wine 11 em Linux.
+   116 PASS / 0 FAIL com o `map-overlay` e as fases E e E2 (2026-10-30), Wine 11
+   em Linux.
 6. `build/` e `dist/` não são versionados. Regenere-os: CMake e
    `python3 tools/package.py`.
 7. O histórico da conversa e as memórias do Claude ficam em
@@ -200,8 +195,8 @@ do jogo): **não captura a tela**.
 
 ## Próximos passos (ordem recomendada)
 
-0. **Decisões do dono ainda abertas**: enviar (push) a branch ao `origin`; mesclar
-   na `main`; estratégia do C4 (base 1.13c do PD2 e do Median XL).
+0. **Decisão do dono ainda aberta**: estratégia do C4 (base 1.13c do PD2 e do
+   Median XL).
 1. **Teste final do usuário** (roteiro em [`FINAL_TEST.md`](FINAL_TEST.md)): conferir a
    imagem sob o D2GL no hardware dele e medir o desempenho.
 2. **M2.2 — estado do jogo**: unidades e nível/mapa têm spec e símbolos; falta o
