@@ -9,7 +9,9 @@
 > SHA-256 `631066c1649c4ea9ffe48bf97e24c00bca1f7a6759c21150f1a79982589adaaf`,
 > `objdump` + índice próprio de referências, execução invisível e muda sob Wine
 > 11.20 com uma sonda externa de leitura de memória (2026-10-29). Endereços em
-> **VA** (VA = RVA + `0x400000`, sem ASLR).
+> **VA** (VA = RVA + `0x400000`, sem ASLR). A segunda análise (2026-10-30) está
+> descrita na spec companheira; a matriz do que foi visto em cada ato e dificuldade
+> está em §9.
 
 ## 1. Coordenadas
 
@@ -39,7 +41,7 @@ sala nula (sem asserção), 276 chamadores. 🔷 `0x66BAB0` faz o mesmo a partir
 |---|---|---|
 | `+0x0C` | semente do mapa (igual a `DrlgAct+0x458`) | ✅ valor |
 | `+0x10` | ponteiro (lista de salas ativas?) | ⚠️ `TODO(RE)` |
-| `+0x14` | 0 no Ato I (número do ato?) | ⚠️ só um ato visto |
+| `+0x14` | número do ato: 0 a 4 (igual a `Unit+0x18` do jogador) | ✅ Atos I–V |
 | `+0x48` | `DrlgAct*` | ✅ |
 
 ### 2.2 `DrlgAct`
@@ -60,13 +62,22 @@ sala nula (sem asserção), 276 chamadores. 🔷 `0x66BAB0` faz o mesmo a partir
 | `+0x00` | tipo DRLG: 1 labirinto, 2 preset, 3 externo | ✅ (cidade 2, Charneca 3, Covil 1) |
 | `+0x04` | flags | 🔷 |
 | `+0x10` | primeira `Room2`; **0 = nível ainda não gerado** | ✅ |
-| `+0x1C`, `+0x20` | X, Y em tiles | ✅ |
-| `+0x24`, `+0x28` | largura, altura em tiles | ✅ |
+| `+0x1C`, `+0x20` | X, Y em tiles; **já valem com `+0x10 == 0`** | ✅ |
+| `+0x24`, `+0x28` | largura, altura em tiles; idem | ✅ |
 | `+0x1AC` | próximo `Level` do ato | ✅ |
 | `+0x1B4` | `DrlgAct*` | ✅ |
 | `+0x1C0` | tipo de nível (de `LevelDefs+0x34`) | 🔷 |
 | `+0x1C4` | semente | 🔷 |
 | `+0x1D0` | id (linha de `levels.txt`) | ✅ |
+| `+0x1E0` | `int[9]`: X, em subtiles, do centro de cada sala com waypoint ou warp real | ✅ |
+| `+0x204` | `int[9]`: Y, idem | ✅ |
+| `+0x228` | quantos pontos valem | ✅ |
+
+**Pontos de interesse do nível.** `0x6423D0` `D2Common.BuildLevelPoints` roda ao gerar
+o nível e percorre as salas: entram as que têm os bits `0x30000` (§2.4) ou um warp
+com `Warp[n] ≠ −1`. 🔷 Exemplo ao vivo: nível 44 → (5740, 5420), a sala do waypoint,
+e (5540, 5300), a do warp. O nível 43, gerado e nunca visitado, já trazia dois
+pontos. ✅ A lista não diz qual ponto é o quê: cruze com as flags das salas.
 
 Na primeira leitura dentro do Ato I, o ato já tinha os níveis 1, 2, 3, 4,
 5, 6, 7, 8–16, 17, 26, 27, 39 **alocados**, mas só 1, 2 e 3 com salas
@@ -77,19 +88,43 @@ salas. ✅
 
 | Offset | Tam. | Campo | Conf. |
 |---|---|---|---|
-| `+0x08` | 4 | lista de `Room2*` vizinhas (pode incluir salas de **outro** nível) | ✅ |
+| `+0x08` | 4 | lista de `Room2*` vizinhas (pode incluir salas de **outro** nível). **Só existe depois que a sala foi ativada** (abaixo) | ✅ |
 | `+0x0E` | 2 | contador de carga explícita (1 nas salas pedidas pelo servidor, 0 nas vizinhas) | ✅ observado |
 | `+0x20` | 4 | dados do tipo (preset/labirinto) | 🔷 |
 | `+0x24` | 4 | próxima `Room2` do nível | ✅ |
-| `+0x28` | 4 | flags; bit `0x10 << n` = contém o warp *n* (§4.2) | ✅ |
-| `+0x2C` | 4 | número de vizinhas | ✅ |
+| `+0x28` | 4 | flags (abaixo) | ✅ |
+| `+0x2C` | 4 | número de vizinhas; 0 antes da ativação | ✅ |
 | `+0x30` | 4 | `Room1*`; **≠ 0 ⇔ sala carregada** | ✅ |
 | `+0x34`, `+0x38` | 4 | X, Y em tiles | ✅ |
 | `+0x3C`, `+0x40` | 4 | largura, altura em tiles | ✅ (8×8 na cidade) |
+| `+0x44` | 1 | estágio de atividade: 1 a 3 nas salas ativas ou na fila de descarga; 4 em sala inativa, visitada ou não | ✅ valor ⚠️ |
 | `+0x48` | 4 | tipo da sala (2 = preset) | 🔷 + ✅ valor |
 | `+0x4C` | 4 | lista de `RoomTile` (saídas por warp, §4.2) | ✅ |
 | `+0x58` | 4 | `Level*` | ✅ |
 | `+0x5C` | 4 | lista de `PresetUnit` | ✅ |
+
+**Flags `Room2+0x28`:**
+
+| Bit | Significado | Conf. |
+|---|---|---|
+| `0x10 << n` (`0xFF0`) | vínculo com `Vis[n]`; é warp só com `Warp[n] ≠ −1` (§4.2) | ✅ |
+| `0x1000`…`0x8000` | em poucas salas de cada nível externo | ⚠️ `TODO(RE)` |
+| **`0x10000`, `0x20000`** | **a sala tem waypoint** (máscara `0x30000`). Vale **sem carregar a sala**, desde a geração do nível | ✅ uma sala por nível com waypoint, nos Atos I–V, e o waypoint estava nela sempre que a sala carregou. 🔷 `0x66BAA0`, `0x66BB60` |
+| `0x40000`, `0x80000` | quase todas as salas | ⚠️ `TODO(RE)` |
+| `0x100000` | sala ligada: vizinhas prontas (`0x61B757`) | 🔷 + ✅ valor |
+| `0x800000` | sala de preenchimento nas beiradas (`0x66BB43` devolve nível 0 para ela). Não distingue passagem | 🔷 + ✅ valor |
+| `0x1000000` | arquivos de tiles da sala processados (`0x61B324` → `0x66F240`) | 🔷 |
+| `0x2000000` | predefinidas da sala processadas (`0x61B338` → `0x667890`) | 🔷 |
+
+`0x1000000` e `0x2000000` mostram só até onde a preparação do jogo já chegou. Não
+marcam borda nem passagem. A primeira leitura pareceu indicar isso; o código mostra
+o contrário.
+
+**Quando as vizinhas existem.** A lista `+0x08` é montada em `0x61B730`
+`D2Common.EnsureRoomActive` (`0x66C370`, só se `+0x2C` for 0), na ativação. 🔷 Ao
+vivo ✅: na Planície Fria, as salas carregadas tinham vizinhas e as de `r1 = 0`
+nunca visitadas tinham `+0x2C = 0`. Depois de descarregada, a sala **mantém** a
+lista: no nível 44 havia 61 salas descarregadas com vizinhas.
 
 ### 2.5 `Room1` (sala ativa)
 
@@ -140,6 +175,12 @@ igual à unidade tile viva.
 - O jogo consulta antes a lista de exceções `DrlgAct+0x90`:
   `0x66C040` (`Vis`) e `0x66AEC0` (`Warp`), ambos `__fastcall(DrlgAct*, id)` →
   `int[8]`. 🔷 Use essas duas para ter o mesmo resultado do jogo.
+- **As vizinhanças externas só existem na exceção.** No Ato I, `LevelDefs` dá o nível
+  2 com `Vis` = 0, 0, 0, 8, 8, 8, 8, 0; a exceção dá 3, 1, 0, 8, 8, 8, 8, 0, com
+  `Warp[0..1]` = −1. Quem ler só `LevelDefs` não vê as bordas. Listas de exceção
+  vistas nos Atos I–V. ✅
+- `Vis[n] ≠ 0` com `Warp[n] = −1` é passagem aberta (§4.1); com `Warp[n] ≠ −1`, warp
+  (§4.2). ✅
 
 ### 2.8 Cidades
 
@@ -179,9 +220,42 @@ em vários lugares (`0x66B030`, `0x66C220`, `0x642C30`, `0x668100`). 🔷 O trat
 pacote `0x07` chama `AddRoomData([0x7A0634], nível, x, y, sala do jogador)`.
 🔷
 
-`TODO(RE)` antes de qualquer uso: thread (só na principal), custo, se o
-servidor local (single player) reage a salas carregadas pelo cliente, e
-liberação (`RemoveRoomData` na mesma posição).
+### 3.1 Carregar salas por fora: o que foi medido
+
+Teste de análise, só na cópia-espelho: um plugin descartável (scratchpad) chamou as
+funções na **thread principal**, dentro de `on_tick`, em uma partida de um jogador,
+dificuldade Normal, Ato I. Resultados ✅:
+
+| Caso | Resultado |
+|---|---|
+| `AddRoomData(act, nível, x, y, sala do jogador)` numa sala distante do nível atual | 5,2 ms; `Room1` criada, `+0x0E` = 1; a sala do warp ganhou `RoomTile` e `PresetUnit` tipo 5 |
+| Posição obtida assim | **exata**: (5113, 5066), igual à unidade tile que apareceu depois ao chegar lá. O warp funcionou normalmente |
+| Nível ainda não gerado (`Level+0x10 == 0`) | gerou o nível sozinho: 11,7 ms, 95 salas, 9 carregadas em volta do ponto. Posições dos dois warps iguais às de outra partida com a mesma semente |
+| Todas as 95 salas de um nível gerado, em seguida | 4,9 ms no total, 0,76 ms no pior caso |
+| `RemoveRoomData` | 0,018 ms; `+0x0E` volta a 0 e a sala vai para o estágio 3. A `Room1` não some na hora: seguia lá após 3 s em dois testes; no teste com o nível inteiro, nenhuma restava após 4 s. `PresetUnit` e `RoomTile` **continuam** |
+| Unidades | nenhuma nova nas tabelas: o servidor não fica sabendo |
+| Automap do jogo | nenhuma célula nova visível com 6 salas carregadas (comparação visual de quadros) |
+| Depois disso | andar e entrar no warp seguiram normais, e salvar e sair também. Nenhuma queda nesses testes, que duraram poucos minutos |
+
+Portanto dá para saber a posição exata de um warp sem chegar perto: chame
+`AddRoomData` e depois `RemoveRoomData` na sala do warp, uma vez por sala, e leia as
+`PresetUnit`, que ficam. Salas com waypoint já são conhecidas pela flag (§2.4).
+
+`0x667890` `D2Common.InitRoomPresets` sozinha **não** resolve: numa sala já
+preparada e sem `Room1`, a chamada não criou a predefinida do warp. Quem cria é a
+ativação (`0x61B730`). ✅
+
+`TODO(RE)`, o que **não** foi testado:
+- multijogador: lá o servidor é remoto, e esse caminho não foi exercitado;
+- Atos II–V e dificuldades acima do Normal, com estas chamadas;
+- nível de **outro ato** como argumento (não tente);
+- efeito no arquivo `.ma0`/`.map` do personagem e sessões longas;
+- carregar enquanto o servidor pede a mesma sala: o contador `+0x0E` acumula, mas a
+  corrida não foi provocada de propósito;
+- `GetLevel` e `InitLevel` chamadas diretamente. `AddRoomData` já as cobre.
+
+`AddRoomData` **asserta com `Act*` nulo**. Chame só dentro de partida, com o jogador
+carregado, e no evento da thread principal.
 
 ## 4. Saídas do nível (C1)
 
@@ -192,8 +266,36 @@ O jogo identifica três tipos de saída:
 Uma `Room2` cujas vizinhas (`+0x08`, `+0x2C`) incluem salas de **outro**
 `Level` (`Room2+0x58` diferente) é borda de saída. A cidade do Ato I liga-se à
 Charneca assim, sem warp: as salas da borda sul (tiles y = 1112) têm vizinhas do
-nível 2 em y = 1120. ✅ Funciona sem carregar salas (vizinhança existe desde a
-geração).
+nível 2 em y = 1120. ✅
+
+**Correção da primeira análise:** a vizinhança **não** existe desde a geração. Ela
+só aparece nas salas já ativadas (§2.4). A primeira análise viu a cidade, onde tudo
+fica ativo, e generalizou. ✅
+
+**Por que a borda da Charneca com os Campos Frios (nível 3) não apareceu.** As salas
+da Charneca junto ao nível 3 ainda não tinham sido ativadas, então as listas estavam
+vazias. O nível vizinho existia. Ao entrar pelo waypoint do nível 3, perto dessa
+borda, cinco salas de cada lado passaram a listar as do outro nível. ✅ O mecanismo
+está confirmado; a caminhada original pela Charneca não foi repetida passo a passo.
+
+**Como saber da borda antes de chegar perto:** os retângulos dos níveis (`Level+0x1C`
+a `+0x28`) já valem antes da geração, e os vizinhos são os `Vis[n] ≠ 0` com
+`Warp[n] = −1`. Dois retângulos que se tocam dão o trecho da fronteira:
+
+| Níveis | Retângulo A | Retângulo B | Trecho comum |
+|---|---|---|---|
+| 2 e 3 | (888, 1064, 96, 56) | (984, 1080, 80, 80) | x = 984, y de 1080 a 1120 |
+| 3 e 4 | (984, 1080, 80, 80) | (1000, 1000, 80, 80) | y = 1080, x de 1000 a 1064 |
+
+O trecho é **onde a passagem está**, não a passagem. Na borda 3–4, o trecho tem 8
+salas de largura; as salas do nível 4 ligadas ao nível 3 na hora da leitura eram as
+de x = 1008 e 1016. ✅ `TODO(RE)`: o gerador do mapa externo guarda a posição exata
+em alguma estrutura; não foi localizada. Para ela hoje: ativar a sala (§3.1) ou
+esperar o jogador chegar. Um mod deve marcar esse caso como aproximado.
+
+A lista de vizinhas também inclui a **sala de destino de um warp** já ligado: no nível
+44, a sala (1104, 1056) lista salas do nível 65, com `Warp[2]` = 50. ✅ Não confunda
+com borda: só é borda se o `n` daquele nível tiver `Warp[n] = −1`.
 
 ### 4.2 Warps (cavernas, escadas, portais de nível)
 
@@ -201,10 +303,21 @@ geração).
    `Vis[n]` usando o registro `Warp[n]` de `lvlwarp`. ✅
 2. A `Room2` que contém o warp *n* tem o bit `0x10 << n` em `+0x28`. ✅ Na
    Charneca, **uma** sala tinha `0x200` (n = 5 → `Vis[5]` = 8, Covil do Mal) e era
-   a sala da entrada. **Atenção:** os bits de índices sem `Vis` (0x10, 0x20…)
-   aparecem em quase todas as salas e não significam warp; só considere *n* com
-   `Vis[n] ≠ 0` e `Warp[n] ≠ −1`. ✅ Isso dá a sala da saída **sem carregar nada**;
-   a posição exata exige a sala carregada.
+   a sala da entrada. **Regra:** só considere *n* com `Vis[n] ≠ 0` **e**
+   `Warp[n] ≠ −1`, usando os valores da exceção (§2.7). Com `Warp[n] = −1` o bit
+   marca vínculo com nível aberto e aparece em muitas salas (180 de 192 no nível
+   76, 288 de 288 no 107). ✅ Isso dá a sala da saída **sem carregar nada**; a posição
+   exata exige a sala carregada ou ativada (§3.1).
+
+   **Labirintos e demais níveis.** Com essa regra, houve **no máximo uma sala por
+   *n***, em todos os níveis conferidos dos Atos I–V (§9). Em labirinto (tipo 1) o bit
+   é preciso: no nível 57, 2 de 24 salas têm algum bit, e são as duas dos warps; no
+   113, 3 de 44; no 101, 2 de 15. ✅ O mod **não precisa** descartar candidatas nem
+   tratar labirinto à parte: várias salas com o mesmo *n* real não ocorreram.
+
+   Um nível pode ter vários *n* para o mesmo destino, e só um é usado: no nível 3,
+   `Vis[3..6]` = 9, com salas só em `n` = 6. No nível 101 há quatro warps possíveis
+   e duas salas. ✅ Não conte saídas pelos `Vis`; conte pelas salas.
 3. Quando essa sala carrega, `0x66C220` `D2Common.LinkLevelWarp` busca
    `Vis[n]`, aloca/gera o nível de destino e cria uma `RoomTile` (0x18 bytes,
    alocada em `0x66BE10`) na lista `Room2+0x4C`: 🔷 + ✅
@@ -219,7 +332,10 @@ geração).
 
 4. A sala ganha uma `PresetUnit` **tipo 5** com classe = id do `lvlwarp` (a
    posição exata da saída), e o cliente cria **unidades tipo 5** na mesma posição
-   (cinco cópias vistas para a entrada do Covil). ✅
+   (cinco cópias vistas para a entrada do Covil). ✅ As predefinidas **ficam** depois
+   que a sala descarrega. ✅ A tabela de unidades também traz o tile do **outro lado**
+   do warp: no nível 76 apareceu a classe 52 em (7629, 5011), fora do retângulo do
+   nível; no 106, a classe 70 em (7900, 6350). Filtre pelo nível da sala da unidade. ✅
 5. Registro de `lvlwarp`: 0x30 bytes; os valores lidos (id 2: −60, −60, 85, 100,
    5, 0, −1, 1, 1, 2, `'b'`) coincidem com a ordem pública das colunas de
    `lvlwarp.txt` (Id, SelectX, SelectY, SelectDX, SelectDY, ExitWalkX,
@@ -230,10 +346,14 @@ geração).
 
 São `PresetUnit` tipo 2 (objetos) ou tipo 1 (NPCs/superúnicos) em salas
 carregadas, e as unidades correspondentes. O jogo não marca "objetivo" na
-estrutura; a classificação vem dos dados (`objects.txt`, `monstats.txt`,
-`superuniques.txt` da instalação do usuário). Classes confirmadas: 119 =
-waypoint do Ato I, 267 = baú. ✅ A tabela binária de `objects` está em
-`game-exe-1.14d-units.md` §5.
+estrutura. Waypoints são reconhecidos por `SubClass & 0x40` no registro de `objects`
+(`game-exe-1.14d-units.md` §5.1), e a **sala** do waypoint pelos bits `0x30000`, sem
+carregar nada (§2.4). ✅
+
+O próprio jogo faz isso em `0x66AD80` `D2Common.FindLevelWaypoint`: acha a sala pelos
+bits, ativa-a e procura a `PresetUnit` tipo 2 com o bit `0x40`. 🔷 Ela tem convenção
+própria e ativa a sala; prefira a flag ou §3.1. Portais por objeto:
+`game-exe-1.14d-units.md` §5.3.
 
 ## 5. Automap
 
@@ -246,14 +366,20 @@ waypoint do Ato I, 267 = baú. ✅ A tabela binária de `objects` está em
 | `0x711254` | divisor da escala: **10** (modo 0) ou **20** (modo 1) | `D2Client.SetAutomapMode` (+20) | ✅ |
 | `0x7A5198`, `0x7A519C` | deslocamento X, Y (int32), recalculado a cada quadro do automap | `D2Client.AutomapUnitToScreen` (+2, +13) | ✅ |
 | `0x7A51C8`…`0x7A51D4` | retângulo de recorte: esquerda, topo, direita, base | `D2Client.AutomapClipCheck` (+2, +14, +26) | ✅ valores |
-| `0x7A5210` | 3 = não desenhar; 1 e 2 deslocam o automap ¼ de tela para um lado (motivo provável: painel aberto) | — | 🔷 valores, ⚠️ motivo |
-| `0x71146C`, `0x711470` | largura e altura da tela do jogo (800×600 vistos) | — | ✅ valor |
+| `0x7A5210` | lado dos painéis abertos (§5.4) | `D2Client.GetAutomapPanelSide` (+1) | ✅ |
+| `0x7A5214` | desvio do automap em tela cheia: −largura/4, 0 ou +largura/4 | `D2Client.SetAutomapPanelSide` (+18) | ✅ |
+| `0x7A27C0` | array de estado de UI (§5.4) | `D2Client.GetUiState` (+3) | ✅ |
+| `0x71146C`, `0x711470` | largura e altura do quadro: **640×480 ou 800×600** (§5.5) | `D2Client.ScreenSizeAnchor` (+6, +12) | ✅ |
 
 - O modo vem da opção do jogo (registro `AutoMapMode`), aplicada por
   `0x45A720` `D2Client.SetAutomapMode` (`ecx` = modo), que também grava o
   divisor. 🔷 Valores > 2 viram 0. O menu só alterna 0 ↔ 1. ✅
-- Recorte observado: tela cheia (−16, −16, 800, 600); minimapa (−8, 96, …). ✅
-- No modo 1 o minimapa fica no **canto superior esquerdo** do quadro 800×600. ✅
+- Recorte observado em 800×600: tela cheia (−16, −16, 800, 600); minimapa (−8, 96,
+  266, 296); minimapa com painel à esquerda (525, 78, 799, 278). Em 640×480, tela
+  cheia (−16, −16, 640, 480). ✅
+- No modo 1 o minimapa fica no **canto superior esquerdo** do quadro 800×600. Com um
+  painel à esquerda, ele vai para o **canto superior direito**, e o recorte e os
+  deslocamentos mudam junto. ✅ Leia sempre os globais; não fixe posição.
 
 ### 5.2 Mundo → tela do automap
 
@@ -272,9 +398,14 @@ ay = cy / div − [0x7A519C] − 8                 (div = [0x711254]; divisão i
 - Para unidades, use `cx`/`cy` do caminho (`+0x08/+0x0C` dinâmico, `+0x04/+0x08`
   estático): é o que o jogo faz. Para predefinidas, use a fórmula. ✅
 - O jogo descarta pontos fora do recorte (§5.1) antes de desenhar. 🔷
-- A cruz do jogo (`0x45A7F0`) ainda soma **x − 1, y + 5** no modo 1. 🔷
-- `TODO(RE)`: resolução diferente de 800×600 (D2GL, `-w` com outro tamanho) —
-  só 800×600 foi observado.
+- A cruz do jogo (`0x45A7F0`) ainda soma **x − 1, y + 5** no modo 1. ✅ (as marcas
+  calculadas com o ajuste caíram sobre as cruzes.)
+- **Vale em todos os casos testados** ✅, com marcas calculadas sobre as cruzes do jogo
+  em quadros gravados: cidades dos Atos I a V; Normal, Pesadelo (Atos I e II) e Inferno
+  (Atos III e V); 640×480 e 800×600; painel à direita e à esquerda; minimapa com painel
+  à direita e à esquerda. Os deslocamentos já incorporam o painel: **não some
+  `0x7A5214` de novo**. Com o lado 3 o automap não é desenhado e os deslocamentos ficam
+  velhos.
 
 ### 5.3 Onde o jogo desenha o automap
 
@@ -299,8 +430,68 @@ principal, e só quando o jogo desenha o automap. 🔷 (não testado)
 **O `on_present` basta?** Para um primeiro mod, sim, com cuidado: ✅ o automap já
 está no quadro quando o `on_present` roda, e a fórmula dá pixels desse quadro.
 Limites: desenha **por cima** de painéis e menus abertos (inventário, Esc), então
-teste `[0x7A27E8]` e recorte pelo retângulo `0x7A51C8…`; sob D2GL ele roda em
-outra thread (copie os pontos no `on_tick`); a escala do D2GL não foi examinada.
+teste `[0x7A27E8]`, recorte pelo retângulo `0x7A51C8…` e pela §5.4; sob D2GL ele roda
+em outra thread (copie os pontos no `on_tick`); a escala do D2GL não foi examinada.
+
+### 5.4 Painéis abertos
+
+**`[0x7A5210]` (lado):** ✅ observado em tela cheia e no minimapa.
+
+| Valor | Situação | Automap em tela cheia | `[0x7A5214]` (800×600) |
+|---|---|---|---|
+| 0 | sem painel lateral | centrado | 0 |
+| 1 | painel à **direita** (inventário, árvore de habilidades) | desviado para a esquerda; marcas em x < 400 | −200 |
+| 2 | painel à **esquerda** (personagem, missões, waypoint, mercenário) | desviado para a direita; marcas em x ≥ 400 | +200 |
+| 3 | os dois lados (personagem + inventário; baú) | **não é desenhado** (`0x456F93` testa) | 0 |
+
+O recorte `0x7A51C8…` **não** exclui o painel em tela cheia: continua (−16, −16, 800,
+600). Para não desenhar sobre o painel, o mod precisa cortar por conta própria:
+lado 1 → x < largura/2; lado 2 → x ≥ largura/2; lado 3 → nada. ✅ No minimapa o painel
+direito não muda nada e o esquerdo muda o canto (§5.1).
+
+`0x45AE90` `D2Client.GetAutomapPanelSide` devolve o lado, sem argumentos. 🔷
+`0x45AEA0` `D2Client.SetAutomapPanelSide` o grava; não chame. 🔷
+
+**`[0x7A27C0 + i*4]` (o que está aberto):** 0x26 entradas. Leitura direta, ou
+`0x453A90` `D2Client.GetUiState` (`__fastcall`, `ecx` = i, sem conferir) ou `0x4538D0`
+(asserta com i ≥ 0x26). 🔷 Índices vistos ligando cada coisa ✅:
+
+| i | Painel | Lado |
+|---|---|---|
+| 1 | inventário | 1 |
+| 2 | personagem | 2 |
+| 3 | lista de habilidades do botão | 0 |
+| 4 | árvore de habilidades | 1 |
+| 8 | **diálogo de NPC** | **0** |
+| 9 | menu do Esc (zera `[0x7A27E8]` enquanto aberto) | 0 |
+| 10 | automap (`0x7A27E8` é esta entrada) | — |
+| 15 | missões | 2 |
+| 19 | mercenário | 2 |
+| 20 | waypoint | 2 |
+| 25 | baú | 3 |
+| 33 | ajuda (H) | 0 |
+
+- O diálogo de NPC **não muda o lado**, e o automap continua ligado: teste também
+  `i = 8`. Fora dele, o lado basta para os painéis laterais. ✅
+- A entrada 19 ficou em 1 depois que o painel do mercenário fechou com Esc. ✅ Portanto
+  não confie em uma entrada isolada: o lado é a fonte confiável para painel lateral.
+- Entradas 0, 21 e 35 ficaram ligadas sem nenhum painel. 38 em diante não são flags
+  (valores de outra natureza além do limite de 0x26). ⚠️
+- `TODO(RE)`: cubo, troca com NPC, jogadores, chat. Os demais índices não foram
+  abertos.
+
+### 5.5 Tamanho do quadro
+
+- `0x44BA20` `D2Client.SetGameResolution` (`ecx` = modo): modo 0 → 640×480; modo 2 →
+  800×600. Grava `0x71146C`, `0x711470` e recalcula o lado. 🔷 São os únicos tamanhos
+  que este caminho grava.
+- Visto ao vivo ✅: menu principal 640×480 nos globais, mesmo com a janela do menu em
+  800×600; partida 800×600; na opção "Resolution" do jogo, área cliente, globais e
+  quadro passam a 640×480 e o automap segue a fórmula.
+- **Regra:** com o renderizador GDI, o quadro do `on_present` tem o tamanho de
+  `[0x71146C]`×`[0x711470]` numa partida. Leia os globais, não fixe 800×600. ✅
+- `TODO(RE)`: o encaixe do D2GL segue sendo o modelo observado em
+  [`modding/MAP_OVERLAY.md`](../modding/MAP_OVERLAY.md). Nesta análise o D2GL não rodou.
 
 ## 6. Primitivas de desenho do jogo (opcional)
 
@@ -332,15 +523,61 @@ deslocamentos de uma tabela em `0x6D6638`. 🔷 `TODO(RE)`: significado exato de
 `D2Common.AddRoomData`, `D2Common.RemoveRoomData`,
 `D2Common.GetLevelDefRecord`, `D2Common.GetLevelVis`,
 `D2Common.GetLevelWarpIds`, `D2Common.LinkLevelWarp`, `D2Gfx.DrawLine`,
-`D2Gfx.DrawRectangle`, `D2Win.DrawText`, `D2Win.SetFont`, `D2Win.GetTextWidth`.
+`D2Gfx.DrawRectangle`, `D2Win.DrawText`, `D2Win.SetFont`, `D2Win.GetTextWidth`. Da
+segunda análise: `D2Client.GetAutomapPanelSide`, `D2Client.SetAutomapPanelSide`,
+`D2Client.GetUiState`, `D2Client.GetUiStateChecked`, `D2Client.SetGameResolution`,
+`D2Client.ScreenSizeAnchor`, `D2Common.Room2WaypointFlags`,
+`D2Common.Room2HasWaypoint`, `D2Common.BuildLevelPoints`, `D2Common.InitRoomPresets`,
+`D2Common.EnsureRoomActive`, `D2Common.FindLevelWaypoint`.
 
 ## 8. Em aberto (`TODO(RE)`)
 
-1. `AddRoomData`/`InitLevel` chamados por plugin: thread, custo, efeito no
-   servidor local e liberação. Nada disso foi executado.
-2. `RoomTile+0x08/+0x0C/+0x14`, `Act+0x10/+0x14`, `PresetUnit+0x00/+0x1C`.
+1. Carregar salas por plugin: o que falta está em §3.1.
+2. `RoomTile+0x08/+0x0C/+0x14`, `Act+0x10`, `PresetUnit+0x00/+0x1C`.
 3. Colunas do registro de `lvlwarp` além do id (só a ordem bate com o público).
-4. Automap fora de 800×600 (D2GL) e o deslocamento por painel aberto (`0x7A5210`).
+4. Encaixe do D2GL. O automap em 640×480 e o desvio por painel estão resolvidos (§5.2,
+   §5.4, §5.5).
 5. Cores/modos das primitivas por renderizador; nenhuma primitiva foi executada.
-6. Atos II–V (níveis com exceções em `DrlgAct+0x90`, ex.: tumbas do Ato II) não
-   foram examinados.
+6. Flags `Room2+0x28` de `0x1000` a `0x8000`, `0x40000`, `0x80000`; `Room2+0x44`.
+7. Posição exata da passagem entre níveis externos sem ativar sala (§4.1).
+8. Índices de UI não abertos (§5.4).
+9. Multijogador não examinado.
+
+## 9. O que foi visto em cada ato e dificuldade
+
+Execução real, invisível e muda (2026-10-30), personagem de teste, mesma semente de
+mapa. "Saídas" = salas com warp real, pela regra de §4.2, e cada `n` real teve no
+máximo uma sala. A fórmula do automap foi conferida nas cidades.
+
+| Nível | Tipo | Ato | Dificuldade | Salas / com algum bit | `n` reais com sala | Bordas vistas | Waypoint |
+|---|---|---|---|---|---|---|---|
+| 3 | externo | I | Normal, Inferno | 97 / 62 | 6 | 2, 4 | classe 119 |
+| 4 | externo | I | Normal | — | 4 (posição exata por §3.1) | — | sala 0x10000 |
+| 5 | externo | I | Pesadelo | 88 / 64 | 4 | — | classe 119 |
+| 6 | externo | I | Pesadelo | 95 / 60 | 2, 5 | 5, 7, 11, 20 | classe 119 |
+| 42 | externo | II | Pesadelo | 95 / 76 | 0 | 43 | classe 156 |
+| 44 | externo | II | Normal, Pesadelo | 96 / 82 | 2 | 43, 45, 65 (warp) | classe 156 |
+| 46 | externo | II | Normal | 97 / 7 | 1 a 7 | — | classe 402 |
+| 57 | labirinto | II | Normal | 24 / 2 | 0, 4 | — | classe 156 |
+| 74 | labirinto | II | Normal | 61 / 0 | nenhum | — | classe 402 |
+| 76 | externo | III | Normal | 192 / 180 | 0, 1 | 77, 84 (warp) | classe 237 |
+| 101 | labirinto | III | Normal | 15 / 2 | 0, 3 | 100, 102 (warps) | classe 324 |
+| 106 | externo | IV | Normal | 74 / 74 | 1 | 105, 107 (warp) | classe 238 |
+| 107 | labirinto | IV | Pesadelo | 288 / 288 | 0 | — | classe 238 |
+| 111 | externo | V | Normal | 160 / 133 | nenhum | 110 | classe 496 |
+| 113 | labirinto | V | Normal | 44 / 3 | 0, 1, 2 | — | classe 511 |
+
+- Layouts de `Unit`, `Room1`, `Room2`, `Level`, `PresetUnit`, `RoomTile`, `LevelDefs` e
+  exceções: leituras coerentes em todos os níveis da tabela. ✅
+- Dificuldade: o nível 3 teve o mesmo retângulo, as mesmas 97 salas e os mesmos warps
+  em Normal e Inferno, com a mesma semente; Pesadelo e Inferno não mudaram offsets. ✅
+- Cidades com a fórmula conferida: Ato I (Normal, Pesadelo), II (Pesadelo), III
+  (Inferno), IV (Normal), V (Normal, Inferno). ✅
+- **Cobertura limitada em Inferno:** o personagem de teste morreu na varredura do nível
+  3, e as rodadas no Ato III e no nível 112 pararam com erro da ferramenta de teste.
+  Inferno ficou com cidades, nível 3 e o início do nível 112. ⚠️
+- **Uma queda sem explicação:** o processo do jogo terminou uma vez durante a condução
+  na cidade do Ato I, com o personagem de teste em nível 99 e sem nenhum mod carregado.
+  Não se repetiu nos testes em nível 90 e a causa não foi investigada. ⚠️
+- As tumbas do Ato II (nível 46) usam as exceções como os demais, e a regra de §4.2 deu
+  uma sala por `n`. ✅ Saber qual é a tumba verdadeira não foi examinado. `TODO(RE)`.
