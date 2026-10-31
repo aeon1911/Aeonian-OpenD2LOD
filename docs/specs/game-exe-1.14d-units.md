@@ -40,6 +40,15 @@
 > como "rótulo do jogo" são o texto que o próprio jogo mostra ao pôr o cursor na
 > unidade, lido em quadros da janela do jogo.
 >
+> **Terceira análise (2026-10-31).** Mesmo binário, de novo numa cópia-espelho invisível e
+> muda, com personagem de teste. Tabelas lidas da memória do processo, sem extração para
+> arquivo. Um plugin descartável (fora do repositório) percorreu as `PresetUnit` de todos os
+> níveis dos cinco atos, em Normal (o "censo"); outra sonda visitou e operou objetos, e leu
+> os monstros vivos. Sementes de mapa: `0x6C838D4A` e, para conferir o que depende do mapa,
+> `0x5A5A1234`. Os módulos de quest do binário foram situados pelas strings de arquivo-fonte
+> `D2Game/Quests/aNqM.cpp`. Rótulos são os que o jogo mostra, lidos em quadros da janela do
+> jogo.
+>
 > **Legenda de confiança:** ✅ confirmado **em execução** (valor lido ao vivo);
 > 🔷 confirmado **só no binário** (código lido, não executado/observado);
 > ⚠️ hipótese, marcada `TODO(RE)`.
@@ -268,14 +277,57 @@ apareceram nos monstros vistos. `TODO(RE)`.
   tabela 734, então o alinhamento não é confiável. `TODO(RE)`: colunas de
   `monstats` além de `+0x00`/`+0x0C`.
 
-**Filtro "inimigo" para o C2** (todos os campos ✅):
-`unit+0x00 == 1` **e** modo ∉ {0, 12} **e** `(monstats+0x0C & 0x100) == 0`
-**e** `(monstats+0x0C & 0x8000) != 0` **e** a unidade **não** está na lista de aliados (§7.1). Conferido nos registros
-carregados das classes vistas nos Atos I–V: as de cidade, inclusive as de ambiente
-(567, 568, 569, com `0x02040401`), são recusadas pelos bits de `+0x0C`; todos os
-monstros hostis vistos passam. Mercenários (271) e hidras (351–353) **passam** pelos
-bits, então a lista de aliados é obrigatória. ✅ Eles têm o bit `0x00040000`, ausente
-nos hostis amostrados, mas presente também nas classes 567–569: não use só esse bit.
+**Filtro "inimigo" para o C2 (corrigido em 2026-10-31):**
+
+```
+inimigo ⇔ unit+0x00 == 1  e  modo ∉ {0, 12}
+          e (monstats+0x0C & 0x100) == 0  e  (monstats+0x0C & 0x8000) != 0
+          e GetUnitAlignment(unit) != 2                 (§7.2)
+```
+
+**Consequência:** a lista de aliados (§7.1) deixa de ser necessária para saber se um monstro é
+hostil. Continua necessária para saber o **dono** e para marcar o aliado como aliado.
+
+O filtro anterior, só com os bits de `+0x0C`, estava errado. Os dois falsos positivos vistos são
+aliados sem nó na lista:
+
+| Classe | Código | `+0x0C` | Onde | Alinhamento | Lista de aliados | Conf. |
+|---|---|---|---|---|---|---|
+| **359** | `IW` | `0x02018408` | cidade do Ato III (3 predefinidas no nível 75) | 2 | ausente | ✅ Normal, Pesadelo, Inferno |
+| **522** | `0A` | `0x0205840B` | nível 112, em volta do jogador | 2 | ausente | ✅ Normal |
+
+**O que distingue a classe 359:** o estado 105 com o stat 172 = 2, igual aos NPCs. O servidor o
+define com `0x5543B0` `D2Game.SetUnitAlignment`. 🔷 Nos registros de `monstats` não há coluna
+que dê esse valor: fora os campos de identificação, nenhum byte separou amigos de hostis nas 37
+classes comparadas. ✅
+
+**Conferência, 123 classes vistas vivas** (Normal, Atos I–V; a cidade do Ato III também em
+Pesadelo e Inferno). Por classe, numa leitura ao vivo: ✅
+
+| Passa nos bits? | Alinhamento | Classes | Situação |
+|---|---|---|---|
+| sim | 0 (sem estado 105 ou sem lista de estados) | 95 | hostis; o filtro as mantém |
+| sim | 2 | 2 (359, 522) | os falsos positivos acima; o filtro as recusa |
+| não | 2 | 18 | NPCs |
+| não | 0 | 8 | ambiente (como 517 e 567–569) |
+
+- Nas invocações e mercenários vistos (§7.1), os bits passam e o alinhamento é 2. ✅
+- **O estado já está lá na primeira leitura.** Em 12 unidades da cidade do Ato III, lidas de
+  cerca de 100 em 100 ms enquanto o jogador se aproximava, nenhuma apareceu sem ele. ✅
+- **Por varredura da tabela:** 626 das 734 classes passam nos bits. Das 43 com `0x400`, as 13 vistas
+  vivas são amigas (359, 522, mercenário e invocações); nenhuma hostil apareceu com esse bit. Se
+  `GetUnitAlignment` não estiver disponível, recusar `0x400` deu o mesmo resultado nas classes
+  vistas. ⚠️ As outras 30 nunca foram vistas vivas.
+- Entre as classes com predefinida nas cinco cidades, só a 359 passa nos bits. ✅
+- Uma `PresetUnit` tipo 1 pode trazer classe **≥ 734**, fora da tabela de `monstats` (64 valores
+  distintos no censo, de 734 a 836). ✅ Nunca a use como índice sem conferir o limite.
+- `TODO(RE)`: alinhamento 1. O servidor o grava em alguns caminhos (🔷), mas ele nunca foi visto
+  vivo. O filtro acima trata 1 como hostil. Também não foram testados monstro convertido e outro
+  jogador na partida.
+
+O próprio jogo, ao desenhar o automap (`0x459BC0` `D2Client.AutomapClassifyUnit`), escolhe a cor
+de monstro pelo bit `0x200` de `+0x0C` (fora as classes 537–539) e pela relação de aliado
+(§7.1). 🔷
 
 ## 5. Objetos: tabela `objects`
 
@@ -338,15 +390,10 @@ entradas. O servidor despacha por ela em `0x584504` (âncora
 | 23 | waypoint (`0x584E30`, procura o waypoint do nível) | ✅ valor nas 16 classes; ✅ waypoints abertos em todos os atos |
 | 15 | portal de jogador e vermelho (classes 59, 60; `0x584870`) | ✅ |
 | 34 | portal do Santuário Arcano (classe 298) | ✅ valor |
-| 43, 46, 66, 70, 71, 73 | outras passagens por objeto (classes 100, 342, 547, 563, 564, 566, 569) | 🔷 valor; não usadas ao vivo ⚠️ |
+| 46 | portal da classe 342 (§5.3) | ✅ |
+| 43, 66, 70, 71, 73 | outras passagens por objeto (classes 100, 547, 563, 564, 566, 569) | 🔷 valor; não usadas ao vivo ⚠️ |
 
-**Objetos de quest não têm coluna própria.** ⚠️ O jogo não os marca: cada um tem uma
-`OperateFn` exclusiva ou quase. Os valores 9 (pedras de Caim), 12, 21, 24, 25, 28,
-31, 33, 42, 49, de 52 a 56 e de 62 a 65 caem em objetos de nome ligado a missões na
-tabela da instalação de análise (cada um com 1 a 5 classes). Isso é pista lida da
-tabela, não execução. Para um mod: comece por `OperateFn` nesses valores, ou por
-`AutoMap ≠ 0`, e ofereça override em `[objects]`. `TODO(RE)`: confirmar um a um
-em jogo, o que exige avançar as missões.
+**Objetos de quest não têm coluna própria, mas `OperateFn` os identifica:** ver §5.4.
 
 **Para o mod (C2):**
 - waypoint ⇔ `registro+0x167 & 0x40`, com o registro lido por `Unit+0x14` →
@@ -373,13 +420,117 @@ em jogo, o que exige avançar as missões.
 |---|---|---|---|---|
 | **59** | portal da cidade (azul) | `SubClass & 0x04`, classe 59; dono em `ObjectData+0x28` | `ObjectData+0x04` | ✅ aberto com pergaminho: na Planície Fria o destino é 1, no lado da cidade é 3 |
 | **60** | portal vermelho | `SubClass & 0x04`, classe 60; sem dono | `ObjectData+0x04` | ✅ em Frigid Highlands: destino 125, rótulo do jogo "Abaddon" |
-| 298 | portal do Santuário Arcano | `SubClass & 0x10` | `ObjectData+0x04` = **0** ⚠️ | ✅ visto no nível 74; destino não vem deste campo |
-| 342 | portal (`Parm0` = 18) | `SubClass & 0x10` | ⚠️ | 🔷 valor, não visto |
+| 298 | portal do Santuário Arcano | `SubClass & 0x10` | pelo **nível atual**: 74 → 54, 54 → 74. `ObjectData+0x04` = 0 | ✅ usado nos dois sentidos |
+| 342 | portal do nível 102 | `SubClass & 0x10` | pelo **nível atual**: 102 → 103. `ObjectData+0x04` = 0 | ✅ com a missão 22 concluída no save; sem ela o clique não faz nada, e o objeto aparece em modo 2 nos dois casos |
 
 - Na cidade, o portal azul aparece na tabela do servidor, tipo 2, modo 2. ✅
-- `TODO(RE)`: destino das classes 298 e 342. `TODO(RE)`: outros portais vermelhos
+- A classe 298 existe só nos níveis 54 e 74, e a 342 só no 102. ✅ censo. Os destinos estão fixos
+  nos tratadores `D2Game.ArcanePortalOperate` e `D2Game.DurancePortalOperate`. 🔷 + ✅
+- A classe 100 (`OperateFn` 43, `D2Game.ObjectWarpOperate`) leva ao nível 73; a 377, que divide o
+  tratador, usa `ObjectData+0x04`. 🔷 Nenhuma das duas tem predefinida no censo nem foi vista viva.
+- `TODO(RE)`: outros portais vermelhos
   (Tristram, vacas, Nihlathak) não foram abertos, mas não há outra classe de
   `SubClass & 0x04` além de 59 e 60. 🔷
+
+### 5.4 Objetivos de quest
+
+**Não há coluna, mas há um critério único e bom: `OperateFn` (`+0x1B3`) nos valores abaixo.** Ele
+vem de onde o tratador está no binário. Os tratadores da tabela `0x732D18` que ficam no código
+dos módulos `D2Game/Quests/aNqM.cpp` (referências às strings entre `0x586EBB` e `0x5BDAD5`) são
+exatamente os 35 valores desta seção; todos os demais estão até `0x5869F0`, no código de
+`.\OBJECTS\ObjMode.cpp`. 🔷 Um mod lê o `OperateFn` do registro; **não precisa de lista de
+classes**.
+
+**Objetivo: use este conjunto.** `OperateFn` ∈ {6, 9, 10, 12, 21, 24, 25, 28, 31, 39, 40, 41, 42,
+49, 52, 53, 54, 55, 56, 57, 58, 59, 65, 67}
+
+Níveis do censo, semente `0x6C838D4A`. Cada classe teve **uma** predefinida, em **um** nível (as 5
+pedras e os 5 selos são classes distintas). "Clique sem efeito": o objeto não mudou de modo, porque
+falta item ou passo da missão no personagem de teste.
+
+| `OperateFn` | Classes | Módulo vizinho | Nível | Em jogo |
+|---|---|---|---|---|
+| 6 | 8 | a1q5 | 4 | ✅ modo 0 → 2 ao operar |
+| 9 | 17–21 (pedras) | a1q4 | 4 | ✅ clique sem efeito |
+| 10 | 26 | a1q4 | 38 | 🔷 + censo |
+| 12 | 30 | a1q4 | 5 | ✅ rótulo "Tree of Inifuss"; modo 0 → 1, item classe 524 no chão |
+| 21 | 108 | a1q3 | 28 | ✅ clique sem efeito |
+| 24 | 149 | a2q3 | 61 | 🔷 + censo |
+| 25 | 152 | a2q6 | **a tumba verdadeira** (abaixo) | ✅ clique sem efeito |
+| 39, 40, 41 | 354, 355, 356 | a2q1–a2q3 | 60, 49, 64 | 🔷 + censo |
+| 42 | 357 | a2q4 | 74 | ✅ clique sem efeito |
+| 28 | 193 | a3q1 | 94 | 🔷 + censo |
+| 31 | 252 | a3q3 | 78 | ✅ modo 0 → 2; visto no quadro |
+| 53 | 404 | a3q5 | 83 | ✅ clique sem efeito |
+| 57, 58, 59 | 405, 407, 406 | a3q2–a3q3 | 93, 85, 91 | 🔷 + censo |
+| 49 | 376 | a4q3 | 107 | ✅ clique sem efeito |
+| 52, 54, 55, 56 | 393 e 395, 392, 394, 396 (selos) | a4q2–a4q3 | 108 | 🔷 + censo; o teste não chegou ao nível |
+| 65 | 546 | a5q5 | 120 | ✅ modo 0 → 2 |
+| 67 | **558** | a5q3 | 114 | ✅ unidade, clique sem efeito; **sem predefinida** (abaixo) |
+
+Visto em jogo, nos cinco atos: 11 valores dos 24, em 15 classes. Os outros 13 têm só o tratador e a
+predefinida.
+
+**Código de quest, mas não é objetivo (falsos positivos do critério cru).** Não os inclua; são
+passagens e peças de roteiro:
+
+| `OperateFn` | Classes | O que é | Conf. |
+|---|---|---|---|
+| 44, 45 | 366, 367 | escada e alavanca do esgoto, nível 92 | 🔷 + censo |
+| 62, 63, 64 | 474, 475, 476 | estátuas, nível 120; passam ao modo 4 quando o altar 546 é operado | ✅ |
+| 66, 71 | 547, 564 | passagens do nível 120 | 🔷 + censo |
+| 70 | 563, 569 | passagens; 563 no nível 131 | 🔷 + censo |
+| 73 | 566 | passagem | 🔷 valor |
+| 69, 72 | 561, 565 | não selecionável; fim do jogo | 🔷 valor |
+
+**Falsos negativos: ligados a missão e fora do conjunto.**
+
+| Classe | `OperateFn` | Situação | Conf. |
+|---|---|---|---|
+| **460** | 0 | a **predefinida** que marca o lugar da 558, no nível 114 | ✅ as duas na mesma posição |
+| **473** | 0 | 3 predefinidas no nível 111, gaiolas; `InitFn` em código de quest; `AutoMap` 310 | 🔷 + censo |
+| 100, 298, 342 | 43, 34, 46 | passagens que dependem de missão; o tratador fica em `ObjMode.cpp` | §5.3 |
+| 268 | 33 | nível 38; `SubClass` 0x08; não é objetivo de missão | 🔷 + censo |
+| 251, 378, 379, 382 | 0 | nível 75, peças de roteiro; `InitFn` em código de quest | 🔷 + censo |
+
+- **Por objeto no chão não dá para saber tudo:** missões que pedem matar um monstro (Radament,
+  Duriel e afins) ou limpar um nível não têm objeto. O mod já mostra superúnicos (§4).
+- **`InitFn` (`+0x1B1`, tabela `0x731BC0`) não serve de critério:** dá positivo em dezenas de classes
+  sem `OperateFn`, inclusive caixas de cena, e não pega 26, 108, 149, 193, 357, 405–407.
+- **`AutoMap ≠ 0` também não serve.** Medido no censo: 63 classes e 194 predefinidas com ele,
+  incluindo santuário, poço, waypoint, baú do jogador, alçapão, escada e portal. E faltam 26, 149,
+  152 e 376. ✅
+
+**A tumba verdadeira do Ato II** é o nível que tem a predefinida da classe 152. ✅ Na semente
+`0x6C838D4A` é o 71; na `0x5A5A1234` é o 69; o nível 73 tem a classe 153 nas duas. Saber isso de
+longe exige carregar as salas (spec de níveis §3.1).
+
+**Mostrar de longe.** Fora a 558, todas as classes do conjunto têm `PresetUnit` tipo 2, então valem
+as duas fontes do mod: a predefinida (sala carregada) e a unidade. Para a 558, leia a unidade e use a
+460 como predefinida. ✅
+
+**Missão já concluída.** O modo da unidade ajuda, sem ser garantia. Com as palavras de missão do save
+marcadas como concluídas (`0x1001` em cada missão, formato público do `.d2s`, só no prefixo de teste),
+sem nenhum clique: ✅
+
+| Classe | Modo | |
+|---|---|---|
+| 8 | 3 | |
+| 17 | 2 | |
+| 30 | 1 | |
+| 546, 474 | 0 | ⚠️ altar e estátua não mudaram. Rodada seguinte à marcação, sem conferir que as palavras seguiam no save |
+
+Portanto: modo ≠ 0 indica objeto já usado; modo 0 **não** prova missão pendente.
+
+**Estado da missão.** `0x65C310` `D2Common.GetQuestState` é `__stdcall(QuestRecord*, int missão, int
+estado)` e lê o bit `missão*16 + estado`. 🔷 Asserta com registro nulo. Os tratadores passam números
+fixos, e eles são os índices de palavra do `.d2s`: 4 (`OperateFn` 9, 10), 11 (24), 17 (28), 19 (31),
+21 (53), 22 (46), 26 (73), 27 (49), 39 (69), 40 (72). 🔷 A 22 foi confirmada: marcar a palavra 22 no
+save liberou a classe 342. ✅
+
+**No cliente esse registro não ajuda.** `PlayerData+0x10`, `+0x14` e `+0x18` do jogador local apontam
+para `{buffer, 0x300}`, um por dificuldade, mas o buffer lido estava **zerado** com a palavra 22
+marcada no save. ✅ `TODO(RE)`: de onde o painel de missões do cliente tira o estado.
 
 ## 6. Resumo para o INI
 
@@ -395,8 +546,11 @@ Símbolos registrados (todos com `bytes` conferidos no binário):
 `D2Client.OnPetPacket`, `D2Client.OnMercPacket`, `D2Client.GetObjectClientFn`,
 `D2Common.GetUnitAlignment`, `D2Common.IsObjectShrine`,
 `D2Common.ObjectSubClassWaypointAnchor`, `D2Game.ObjectOperateDispatch`,
-`D2Game.WaypointOperate`, `D2Game.PortalOperate`. Offsets de estrutura ficam só
-nesta spec.
+`D2Game.WaypointOperate`, `D2Game.PortalOperate`. Da terceira análise:
+`D2Common.GetQuestState`, `D2Game.SetUnitAlignment`, `D2Game.ObjectInitDispatch`,
+`D2Game.ArcanePortalOperate`, `D2Game.DurancePortalOperate`, `D2Game.ObjectWarpOperate`,
+`D2Client.AutomapClassifyUnit`, `D2Client.GetPetRelation`. Offsets de estrutura ficam só nesta
+spec.
 
 ## 7. Dono da unidade: mercenários e invocações
 
@@ -409,7 +563,7 @@ bytes `+1`. ✅
 | Offset | Tam. | Campo | Conf. |
 |---|---|---|---|
 | `+0x00` | 4 | classe (linha de `monstats`) | ✅ |
-| `+0x04` | 4 | tipo do aliado: 7 mercenário; 19 hidra | ✅ |
+| `+0x04` | 4 | tipo do aliado (tabela abaixo) | ✅ |
 | `+0x08` | 4 | **id da unidade aliada** (igual a `Unit+0x0C`) | ✅ |
 | `+0x0C` | 4 | **id da unidade dona** (no jogador local, o `Unit+0x0C` dele) | ✅ |
 | `+0x10` | 4 | 1 no mercenário, 0 nas hidras | ✅ valor ⚠️ |
@@ -439,9 +593,29 @@ Como a lista é mantida (🔷):
 `0x478B10` inclui ou atualiza; `0x478C90` retira; `0x478A50` limpa a lista. O tipo 7
 substitui o nó anterior de mercenário do mesmo dono (`0x478AB0`).
 
-`TODO(RE)`: outros tipos de aliado (golem, esqueleto, valquíria, lobos) e o que muda
-com outro jogador na partida. Só mercenário e hidra foram vistos; a lista não
-depende da classe, então a regra deve valer, mas não foi testada.
+**Aliados vistos ao vivo**, todos com dono = jogador e alinhamento 2. ✅ A classe do personagem de
+teste foi trocada no save, só no prefixo de teste, em Normal, no nível 3.
+
+| Tipo | Classe | Invocação |
+|---|---|---|
+| 2 | 357 | Valquíria |
+| 3 | 289 | Golem de Barro |
+| 7 | 271 | mercenário do Ato I |
+| 10 | 419 | Corvo |
+| 11 | 420 | Lobo Espiritual |
+| 12 | 421 | Lobo Atroz |
+| 13 | 424 | Sábio de Carvalho |
+| 14 | 425 | Trepadeira Venenosa |
+| 15 | 428 | Urso Pardo |
+| 16 | 417, 418 | Guerreiro e Mestre das Sombras |
+| 19 | 351–353 | Hidra |
+
+Lançar Erguer Esqueleto e Reviver sem cadáver por perto não criou unidade: esqueleto e revivido
+**não foram vistos**. `TODO(RE)`, com o que muda com outro jogador na partida.
+
+`0x478D90` `D2Client.GetPetRelation` (`__fastcall`, `ecx` = id, sem asserção): 0 = fora da lista, ou
+de dono sem grupo em comum com o jogador local; 1 = do jogador local; 2 = de alguém do mesmo grupo;
+3 = tipo de aliado sem o bit consultado na tabela de tipos. 🔷
 
 ### 7.2 Alinhamento
 
@@ -459,10 +633,12 @@ Lido ao vivo, percorrendo a memória: lista em `Unit+0x5C`; sub-listas a partir 
 | NPCs 511 e 513, Ato V | 2 | ✅ |
 | monstros hostis | sem o estado: 0 | ✅ |
 | classes 567, 568, 569, na cidade do Ato V | sem o estado: 0 | ✅ |
+| classes 359 e 522, sem nó na lista de aliados | 2 | ✅ |
+| todas as invocações da tabela de §7.1 | 2 | ✅ |
 
-Portanto **alinhamento 2 não identifica aliado do jogador**: também vale para NPCs.
-Use-o como reforço; para dono, use a lista de §7.1. O filtro de §4 continua
-necessário para os NPCs.
+Portanto **alinhamento 2 recusa o que não é hostil, mas não diz quem é aliado do jogador**: também
+vale para NPCs e para as classes 359 e 522. Para dono, use a lista de §7.1. O filtro de §4 usa os dois
+sinais.
 
 ## 8. Em aberto (`TODO(RE)`)
 
@@ -470,7 +646,9 @@ necessário para os NPCs.
 2. Bits `0x80`/`0x100` do WORD `MonsterData+0x16`. Nenhum teste direto de `0x10`
    foi achado no binário: vale o rótulo do jogo.
 3. Colunas de `monstats` além de `+0x00`/`+0x0C`, com o alinhamento das linhas (§4).
-4. Objetos de quest: confirmar em jogo (§5.1). Classes 298 e 342: destino (§5.3).
-5. Outros aliados e multijogador (§7.1). Multijogador (TCP/IP) segue não examinado.
-6. Tudo foi visto com um jogador. As classes de monstro de §4 são uma amostra: o
-   filtro não foi conferido linha a linha na tabela.
+4. Objetos de quest: 13 dos 24 valores de `OperateFn` só têm tratador e predefinida; os selos não foram
+   alcançados em jogo (§5.4). De onde o cliente tira o estado das missões (§5.4). Classes 100 e 377,
+   que não têm predefinida (§5.3).
+5. Esqueleto, revivido e multijogador (§7.1). Multijogador (TCP/IP) segue não examinado.
+6. Tudo foi visto com um jogador. Filtro de §4: 97 das 626 classes que passam nos bits foram vistas
+   vivas; alinhamento 1 e monstro convertido não foram vistos.

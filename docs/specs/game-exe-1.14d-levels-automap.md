@@ -11,7 +11,8 @@
 > 11.20 com uma sonda externa de leitura de memória (2026-10-29). Endereços em
 > **VA** (VA = RVA + `0x400000`, sem ASLR). A segunda análise (2026-10-30) está
 > descrita na spec companheira; a matriz do que foi visto em cada ato e dificuldade
-> está em §9.
+> está em §9. A terceira análise (2026-10-31) trouxe a passagem exata entre níveis externos
+> (§4.1), a colisão (§2.5), o censo de predefinidas (§3.1) e a tumba verdadeira (§9).
 
 ## 1. Coordenadas
 
@@ -90,7 +91,7 @@ salas. ✅
 |---|---|---|---|
 | `+0x08` | 4 | lista de `Room2*` vizinhas (pode incluir salas de **outro** nível). **Só existe depois que a sala foi ativada** (abaixo) | ✅ |
 | `+0x0E` | 2 | contador de carga explícita (1 nas salas pedidas pelo servidor, 0 nas vizinhas) | ✅ observado |
-| `+0x20` | 4 | dados do tipo (preset/labirinto) | 🔷 |
+| `+0x20` | 4 | dados do tipo (preset/labirinto); em níveis externos, ver §4.1 | 🔷 + ✅ |
 | `+0x24` | 4 | próxima `Room2` do nível | ✅ |
 | `+0x28` | 4 | flags (abaixo) | ✅ |
 | `+0x2C` | 4 | número de vizinhas; 0 antes da ativação | ✅ |
@@ -108,11 +109,11 @@ salas. ✅
 | Bit | Significado | Conf. |
 |---|---|---|
 | `0x10 << n` (`0xFF0`) | vínculo com `Vis[n]`; é warp só com `Warp[n] ≠ −1` (§4.2) | ✅ |
-| `0x1000`…`0x8000` | em poucas salas de cada nível externo | ⚠️ `TODO(RE)` |
+| `0x1000`…`0x8000` | em poucas salas de cada nível externo. Não marcam passagem nem objetivo: ausentes nas salas de passagem medidas (§4.1) e nas de 10 objetivos conferidos ✅ | ⚠️ `TODO(RE)` |
 | **`0x10000`, `0x20000`** | **a sala tem waypoint** (máscara `0x30000`). Vale **sem carregar a sala**, desde a geração do nível | ✅ uma sala por nível com waypoint, nos Atos I–V, e o waypoint estava nela sempre que a sala carregou. 🔷 `0x66BAA0`, `0x66BB60` |
 | `0x40000`, `0x80000` | quase todas as salas | ⚠️ `TODO(RE)` |
 | `0x100000` | sala ligada: vizinhas prontas (`0x61B757`) | 🔷 + ✅ valor |
-| `0x800000` | sala de preenchimento nas beiradas (`0x66BB43` devolve nível 0 para ela). Não distingue passagem | 🔷 + ✅ valor |
+| `0x800000` | sala de preenchimento nas beiradas (`0x66BB43` devolve nível 0 para ela). Não distingue passagem: ligado em dezenas de salas por nível ✅ | 🔷 + ✅ valor |
 | `0x1000000` | arquivos de tiles da sala processados (`0x61B324` → `0x66F240`) | 🔷 |
 | `0x2000000` | predefinidas da sala processadas (`0x61B338` → `0x667890`) | 🔷 |
 
@@ -132,6 +133,7 @@ lista: no nível 44 havia 61 salas descarregadas com vizinhas.
 |---|---|---|
 | `+0x00` | lista de `Room1*` vizinhas (inclui a própria) | ✅ |
 | `+0x10` | `Room2*` | ✅ |
+| `+0x20` | colisão da sala (abaixo) | ✅ |
 | `+0x24` | número de vizinhas | ✅ (9 no interior) |
 | `+0x2C` | `Act*` | ✅ |
 | `+0x4C`, `+0x50` | X, Y em subtiles | ✅ |
@@ -143,6 +145,18 @@ lista: no nível 44 havia 61 salas descarregadas com vizinhas.
 
 `0x619790` `D2Common.GetRoomsNear`: `__stdcall(Room1*, Room1*** lista, int*
 qtd)`, copia `+0x00`/`+0x24`; asserta com sala nula. 🔷
+
+**Colisão (`Room1+0x20`):** ✅
+
+| Offset | Campo |
+|---|---|
+| `+0x00`, `+0x04` | X, Y da origem, em subtiles (iguais a `Room1+0x4C`, `+0x50`) |
+| `+0x08`, `+0x0C` | largura, altura em subtiles |
+| `+0x10` a `+0x1C` | os mesmos quatro valores em tiles |
+| `+0x20` | `WORD*`: `largura × altura` palavras, linha por linha |
+
+O bit `0x0001` da palavra bloqueia a caminhada. ✅ Prova em §4.1, andando pela passagem calculada a
+partir dele. Os demais bits não foram examinados. `TODO(RE)`.
 
 ### 2.6 `PresetUnit` (unidade predefinida, 0x20 bytes)
 
@@ -236,6 +250,9 @@ dificuldade Normal, Ato I. Resultados ✅:
 | Unidades | nenhuma nova nas tabelas: o servidor não fica sabendo |
 | Automap do jogo | nenhuma célula nova visível com 6 salas carregadas (comparação visual de quadros) |
 | Depois disso | andar e entrar no warp seguiram normais, e salvar e sair também. Nenhuma queda nesses testes, que duraram poucos minutos |
+| **Censo, 2026-10-31:** `GetLevel` e `InitLevel` diretos, depois `AddRoomData`, leitura das `PresetUnit` e `RemoveRoomData` em cada sala, em todos os níveis do ato | Atos I–V, Normal, níveis 1–132: 0,3 a 17 ms por nível. Cerca de 9.300 predefinidas. Andar, viajar e salvar e sair seguiram normais |
+| **Nível sem nenhuma sala ativa** depois disso | ✅ `Level+0x10` lido logo depois já era **0**, e a chamada seguinte gerou tudo de novo. Em nível distante, as `PresetUnit` **somem** com as salas: leia-as antes de remover. Só "ficam" enquanto o nível continua em uso |
+| **Nível de outro ato** (`GetLevel` com id 40 estando no Ato I) | ✅ **o jogo fecha** (violação de acesso dentro de `InitLevel`) |
 
 Portanto dá para saber a posição exata de um warp sem chegar perto: chame
 `AddRoomData` e depois `RemoveRoomData` na sala do warp, uma vez por sala, e leia as
@@ -247,12 +264,10 @@ ativação (`0x61B730`). ✅
 
 `TODO(RE)`, o que **não** foi testado:
 - multijogador: lá o servidor é remoto, e esse caminho não foi exercitado;
-- Atos II–V e dificuldades acima do Normal, com estas chamadas;
-- nível de **outro ato** como argumento (não tente);
+- dificuldades acima do Normal, com estas chamadas;
 - efeito no arquivo `.ma0`/`.map` do personagem e sessões longas;
 - carregar enquanto o servidor pede a mesma sala: o contador `+0x0E` acumula, mas a
   corrida não foi provocada de propósito;
-- `GetLevel` e `InitLevel` chamadas diretamente. `AddRoomData` já as cobre.
 
 `AddRoomData` **asserta com `Act*` nulo**. Chame só dentro de partida, com o jogador
 carregado, e no evento da thread principal.
@@ -263,22 +278,68 @@ O jogo identifica três tipos de saída:
 
 ### 4.1 Passagem aberta entre níveis externos
 
-Uma `Room2` cujas vizinhas (`+0x08`, `+0x2C`) incluem salas de **outro**
-`Level` (`Room2+0x58` diferente) é borda de saída. A cidade do Ato I liga-se à
-Charneca assim, sem warp: as salas da borda sul (tiles y = 1112) têm vizinhas do
-nível 2 em y = 1120. ✅
+Uma `Room2` cujas vizinhas (`+0x08`, `+0x2C`) incluem salas de **outro** `Level`
+(`Room2+0x58` diferente) **encosta** naquele nível. ✅ A cidade do Ato I liga-se à Charneca assim, sem
+warp: as salas da borda sul (tiles y = 1112) têm vizinhas do nível 2 em y = 1120.
 
-**Correção da primeira análise:** a vizinhança **não** existe desde a geração. Ela
-só aparece nas salas já ativadas (§2.4). A primeira análise viu a cidade, onde tudo
-fica ativo, e generalizou. ✅
+**Correção (2026-10-31): vizinhança não é passagem.** Com todas as salas dos níveis 2, 3 e 4 ativadas,
+**toda** sala do trecho comum lista o outro nível: 5 de 5 na borda 2|3, 7 de 7 na borda 3|4. ✅ A leitura
+anterior, de que só duas salas estavam ligadas, media só as salas ativas naquele momento. Uma linha
+desenhada pela vizinhança mostra a fronteira, não o caminho.
 
-**Por que a borda da Charneca com os Campos Frios (nível 3) não apareceu.** As salas
-da Charneca junto ao nível 3 ainda não tinham sido ativadas, então as listas estavam
-vazias. O nível vizinho existia. Ao entrar pelo waypoint do nível 3, perto dessa
-borda, cinco salas de cada lado passaram a listar as do outro nível. ✅ O mecanismo
-está confirmado; a caminhada original pela Charneca não foi repetida passo a passo.
+A lista também depende de como as salas foram ativadas. Depois do censo (adicionar e remover cada sala,
+nível a nível), nenhuma sala do nível 2 listava outro nível; gerando os níveis antes e mantendo as salas
+carregadas, as listas vieram completas. ✅ A causa não foi investigada. `TODO(RE)`.
 
-**Como saber da borda antes de chegar perto:** os retângulos dos níveis (`Level+0x1C`
+**Passagem exata com a sala carregada: colisão, em qualquer ato.** Com `Room1` dos dois lados, a
+passagem são os pares de células vizinhas através da fronteira, livres dos dois lados (§2.5). Sem
+chamar função do jogo. Medido: ✅
+
+| Borda | Ato | Largura em subtiles | Onde |
+|---|---|---|---|
+| 2\|3, 3\|4, 3\|17, 5\|6, 6\|7 | I | 28 | uma sala |
+| 41\|42, 42\|43, 43\|44, 44\|45 | II | 8 a 9 | duas salas |
+| 75\|76 | III | 7 | uma sala |
+| 76\|77, 77\|78, 78\|79 | III | 30 a 52 | duas salas |
+| 79\|80, 80\|81, 81\|82 | III | 10 a 20 | uma ou duas salas |
+| 110\|111, 111\|112 | V | 17 a 19 | uma ou duas salas |
+
+Prova andando (nível 3 → 4 pelo waypoint do nível 3, semente `0x6C838D4A`, passagem calculada em x = 4999,
+y de 5127 a 5154): em y = 5140, o personagem cruzou para o nível 4 e voltou. Em y = 5100, na mesma
+borda, não cruzou. ✅ No Ato IV não foi medida passagem aberta: 106|107 não se encostam, e a leitura de
+107|108 falhou. `TODO(RE)`.
+
+**Passagem exata sem ativar nada: só no Ato I.** Em nível externo, `Room2+0x20` aponta para:
+
+| Offset | Campo | Conf. |
+|---|---|---|
+| `+0x00` | categoria da sala. Ato I: 4 a 7 e 27, 28 nas bordas retas, 8 a 11 e 20 nos cantos. Outros atos: valores altos (364–375, 529–652, 879–910) | ✅ valor ⚠️ |
+| `+0x08` | ponteiro para a célula do gerador (abaixo) | ✅ |
+
+| Célula, offset | Campo | Conf. |
+|---|---|---|
+| `+0x00` | igual à categoria | ✅ |
+| `+0x04` | **variante** | ✅ |
+| `+0x10`, `+0x14` | X, Y em tiles | ✅ |
+| `+0x18`, `+0x1C` | largura, altura em tiles | ✅ |
+
+**Regra para o Ato I:** entre as salas do nível que tocam o trecho comum (retângulos, abaixo), a sala da
+passagem é a de **variante ≥ 3**, e as células livres são as de **+7 a +34 subtiles** a partir da origem da
+sala, ao longo da fronteira. ✅ Exatamente uma sala por lado nas 5 bordas de 2|3, 3|4, 5|6, 6|7 e 3|17,
+nas duas sementes (`0x6C838D4A` e `0x5A5A1234`), comparado com a colisão. As variantes vistas nas
+passagens foram 3 e, no nível 17, 4; nas demais salas da borda, de 0 a 2.
+
+A variante já vale **antes** da ativação: no nível 2, com `Room1` nula em todas as salas, a sala (936,
+1064) já tinha 3, e as outras três da borda 2|3 lidas nesse momento tinham 0 ou 1. ✅ Serve só para o nível em que as salas existem: nível
+sem sala ativa não mantém as `Room2` (§3.1). Portanto vale para o nível atual e os já ligados a ele.
+
+**Fora do Ato I a regra não vale.** ✅ Nos Atos II, III e V a variante da sala da passagem é 0 ou 1, igual
+à das outras. A categoria difere em alguns casos (Ato II: 372–375; Kurast: 613, 614, 627, 628, 644, 645),
+mas nas selvas e no Ato V ela cobre blocos de até 4 salas além da passagem, e a lista completa não foi
+levantada. `TODO(RE)`. Para esses atos: trecho comum até
+a sala carregar, depois colisão.
+
+**Como saber a borda antes de chegar perto:** os retângulos dos níveis (`Level+0x1C`
 a `+0x28`) já valem antes da geração, e os vizinhos são os `Vis[n] ≠ 0` com
 `Warp[n] = −1`. Dois retângulos que se tocam dão o trecho da fronteira:
 
@@ -287,11 +348,8 @@ a `+0x28`) já valem antes da geração, e os vizinhos são os `Vis[n] ≠ 0` co
 | 2 e 3 | (888, 1064, 96, 56) | (984, 1080, 80, 80) | x = 984, y de 1080 a 1120 |
 | 3 e 4 | (984, 1080, 80, 80) | (1000, 1000, 80, 80) | y = 1080, x de 1000 a 1064 |
 
-O trecho é **onde a passagem está**, não a passagem. Na borda 3–4, o trecho tem 8
-salas de largura; as salas do nível 4 ligadas ao nível 3 na hora da leitura eram as
-de x = 1008 e 1016. ✅ `TODO(RE)`: o gerador do mapa externo guarda a posição exata
-em alguma estrutura; não foi localizada. Para ela hoje: ativar a sala (§3.1) ou
-esperar o jogador chegar. Um mod deve marcar esse caso como aproximado.
+(Exemplos de outra semente: os retângulos mudam com o mapa.) O trecho é **onde a passagem está**, não
+a passagem.
 
 A lista de vizinhas também inclui a **sala de destino de um warp** já ligado: no nível
 44, a sala (1104, 1056) lista salas do nível 65, com `Warp[2]` = 50. ✅ Não confunda
@@ -346,7 +404,9 @@ com borda: só é borda se o `n` daquele nível tiver `Warp[n] = −1`.
 
 São `PresetUnit` tipo 2 (objetos) ou tipo 1 (NPCs/superúnicos) em salas
 carregadas, e as unidades correspondentes. O jogo não marca "objetivo" na
-estrutura. Waypoints são reconhecidos por `SubClass & 0x40` no registro de `objects`
+estrutura; o critério é `OperateFn` no registro de `objects`
+(`game-exe-1.14d-units.md` §5.4). A `PresetUnit` tipo 2 pode trazer classe fora da tabela de `objects`
+(580, 581 e 582 no censo). ✅ Confira o limite. Waypoints são reconhecidos por `SubClass & 0x40` no registro de `objects`
 (`game-exe-1.14d-units.md` §5.1), e a **sala** do waypoint pelos bits `0x30000`, sem
 carregar nada (§2.4). ✅
 
@@ -528,7 +588,8 @@ segunda análise: `D2Client.GetAutomapPanelSide`, `D2Client.SetAutomapPanelSide`
 `D2Client.GetUiState`, `D2Client.GetUiStateChecked`, `D2Client.SetGameResolution`,
 `D2Client.ScreenSizeAnchor`, `D2Common.Room2WaypointFlags`,
 `D2Common.Room2HasWaypoint`, `D2Common.BuildLevelPoints`, `D2Common.InitRoomPresets`,
-`D2Common.EnsureRoomActive`, `D2Common.FindLevelWaypoint`.
+`D2Common.EnsureRoomActive`, `D2Common.FindLevelWaypoint`. A terceira análise não acrescentou símbolo
+de nível: colisão e célula do gerador são offsets de estrutura.
 
 ## 8. Em aberto (`TODO(RE)`)
 
@@ -539,7 +600,8 @@ segunda análise: `D2Client.GetAutomapPanelSide`, `D2Client.SetAutomapPanelSide`
    §5.4, §5.5).
 5. Cores/modos das primitivas por renderizador; nenhuma primitiva foi executada.
 6. Flags `Room2+0x28` de `0x1000` a `0x8000`, `0x40000`, `0x80000`; `Room2+0x44`.
-7. Posição exata da passagem entre níveis externos sem ativar sala (§4.1).
+7. Posição exata da passagem sem ativar sala fora do Ato I; passagem aberta no Ato IV; demais bits da
+   colisão (§2.5, §4.1).
 8. Índices de UI não abertos (§5.4).
 9. Multijogador não examinado.
 
@@ -580,4 +642,6 @@ máximo uma sala. A fórmula do automap foi conferida nas cidades.
   na cidade do Ato I, com o personagem de teste em nível 99 e sem nenhum mod carregado.
   Não se repetiu nos testes em nível 90 e a causa não foi investigada. ⚠️
 - As tumbas do Ato II (nível 46) usam as exceções como os demais, e a regra de §4.2 deu
-  uma sala por `n`. ✅ Saber qual é a tumba verdadeira não foi examinado. `TODO(RE)`.
+  uma sala por `n`. ✅ A tumba verdadeira é o nível com a predefinida da classe 152, e isso muda com a
+  semente: nível 71 em `0x6C838D4A`, 69 em `0x5A5A1234`; o warp do nível 46 para o 71 foi usado e o
+  objeto, visto. ✅ Ver `game-exe-1.14d-units.md` §5.4.
