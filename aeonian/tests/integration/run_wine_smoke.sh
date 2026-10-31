@@ -266,16 +266,20 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" ]]; then
   reg_render 1
   write_config '[core]\nlog_level = debug\nextra_args = -w -ns\n[mods]\ndisabled = selftest, hud-demo\n[game]\nskip_intro = true\n'
   rm -f "$MODS/mapdrive/"*.bmp
-  run_game 75
+  run_game 95
   expect "personagem de teste criado e partida iniciada" 'MAPDRIVE em partida'
   expect "mapa: em partida com o automap aberto"         '\[map-overlay\] em partida, automap aberto'
   expect "mapa: automap em tela cheia (divisor 10, recorte 800x600)" '\[map-overlay\] automap: modo 0, divisor 10, .*recorte lido \(-16,-16,800,600\)'
   expect "mapa: automap em minimapa (divisor 20)"        '\[map-overlay\] automap: modo 1, divisor 20, .*recorte lido'
-  expect "mapa: cidade lida (salas, NPCs, waypoint, borda)" '\[map-overlay\] nivel 1: [0-9]+ salas .*, [1-9][0-9]* NPCs, 1 objetos, .*trechos de borda para 1 nivel'
+  expect "mapa: cidade lida (salas, NPCs, waypoint, borda)" '\[map-overlay\] nivel 1: [0-9]+ salas .*, [1-9][0-9]* NPCs, 1 waypoints \(0 pela sala\), .*trechos de borda para 1 nivel.*ato 1 \(cidade\)'
+  expect "mapa: waypoint pela coluna do jogo, sem configuracao" '\[map-overlay\]   waypoint classe 119, automap'
   expect "mapa: saida pela borda para a Charneca (nivel 2)" '\[map-overlay\]   saida pela borda -> nivel 2 '
   expect "mapa: marcas desenhadas em tela cheia"         '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'
   expect "mapa: marcas desenhadas no minimapa"           '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 1'
   expect "mapa: tecla do mod desliga e religa as marcas" '\[map-overlay\] marcas desligadas'
+  expect "mapa: painel a direita corta o recorte"        '\[map-overlay\] paineis: lado 1, .*marcas visiveis, modo 0, recorte \(-16,-16,399,600\), quadro 800x600'
+  expect "mapa: painel a esquerda corta o recorte"       '\[map-overlay\] paineis: lado 2, .*marcas visiveis, modo 0, recorte \(400,-16,800,600\), quadro 800x600'
+  expect "mapa: os dois lados escondem as marcas"        '\[map-overlay\] paineis: lado 3, .*marcas ocultas'
   expect "roteiro do condutor sem falhas"                'MAPDRIVE roteiro concluido sem falhas'
   forbid "nenhum simbolo com bytes divergentes (partida)" 'bytes nao conferem'
   forbid "sem excecoes de 1a chance (partida)"           'excecao de 1a chance'
@@ -283,13 +287,18 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" ]]; then
   check "quadro da cidade no minimapa gravado (800x600)"   python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e02_cidade_minimapa.bmp" 800 600
   # Faixa da linha de contagem: ~2800 pixels mudam com as marcas; sem elas, so ruido (<= 20).
   check "marcas visiveis no quadro (x com a tecla do mod)" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" "$MODS/mapdrive/e01b_cidade_marcas_desligadas.bmp" 200 0 610 18 1000
+  # Tolerancia pequena: chuva e cursor nos poucos pixels fora do painel.
+  check "painel a direita: marcas so na metade livre" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e03_painel_direita.bmp" "$MODS/mapdrive/e03b_painel_direita_sem_marcas.bmp" 0 0 400 500 50
+  check "painel a direita: nada sobre o painel" python3 -I "$HERE/bmp_check.py" same "$MODS/mapdrive/e03_painel_direita.bmp" "$MODS/mapdrive/e03b_painel_direita_sem_marcas.bmp" 400 0 800 600 40
+  check "painel a esquerda: marcas so na metade livre" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e04_painel_esquerda.bmp" "$MODS/mapdrive/e04b_painel_esquerda_sem_marcas.bmp" 400 0 800 500 50
+  check "painel a esquerda: nada sobre o painel" python3 -I "$HERE/bmp_check.py" same "$MODS/mapdrive/e04_painel_esquerda.bmp" "$MODS/mapdrive/e04b_painel_esquerda_sem_marcas.bmp" 0 0 400 600 40
   mkdir -p "$WORK/quadros-mapa" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa/" 2>/dev/null
   # O outro mod desvia primeiro: os dois ganchos e a original rodam na partida.
   echo "== fase E2: partida com o DrawAutomap ja desviado antes do map-overlay"
   [[ "$SAVES" == "$WORK"/* && -d "$SAVES" ]] && rm -rf "$SAVES"
   printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
   rm -f "$MODS/mapdrive/"*.bmp
-  run_game 60 AEONIAN_MAPDRIVE_HOOK_DRAW=1
+  run_game 80 AEONIAN_MAPDRIVE_HOOK_DRAW=1
   expect "encadeado: personagem criado e partida iniciada" 'MAPDRIVE em partida'
   expect "encadeado: map-overlay ve a partida (ancora do ato)" '\[map-overlay\] em partida, automap aberto'
   expect "encadeado: o gancho do map-overlay roda (marcas desenhadas)" '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'

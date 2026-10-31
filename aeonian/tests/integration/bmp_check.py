@@ -20,6 +20,7 @@
   bmp_check.py minsize ARQ LARGURA ALTURA       -> exit 0 se >= LARGURAxALTURA
   bmp_check.py red    ARQ X Y                   -> exit 0 se o pixel e vermelho (overlay)
   bmp_check.py diff   A B X0 Y0 X1 Y1 MIN       -> exit 0 se >= MIN pixels diferem na regiao
+  bmp_check.py same   A B X0 Y0 X1 Y1 MAX       -> exit 0 se <= MAX pixels diferem na regiao
   bmp_check.py upright ARQ                      -> exit 0 se a tela de titulo esta de pe
 
 Somente biblioteca padrao. O sinal de saida e o resultado; a saida de texto
@@ -63,7 +64,7 @@ def main(a):
         r, g, b = px(int(a[3]), int(a[4]))
         print(f"rgb=({r},{g},{b})")
         return 0 if r >= 150 and g <= 110 and b <= 110 else 1
-    if cmd == "diff":
+    if cmd in ("diff", "same"):
         wa, ha, pa = read(a[2])
         wb, hb, pb = read(a[3])
         x0, y0, x1, y1, need = (int(v) for v in a[4:9])
@@ -73,7 +74,7 @@ def main(a):
         n = sum(1 for y in range(y0, min(y1, ha)) for x in range(x0, min(x1, wa))
                 if pa(x, y) != pb(x, y))
         print(f"{n} pixels diferentes")
-        return 0 if n >= need else 1
+        return 0 if (n >= need if cmd == "diff" else n <= need) else 1
     if cmd == "upright":
         # Titulo do D2: o logotipo de fogo (laranja) fica na metade de cima e o
         # copyright (claro, discreto) embaixo. Conta "fogo" em duas faixas.

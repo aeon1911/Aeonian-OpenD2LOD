@@ -95,7 +95,7 @@ if(WIN32)
     target_link_options(hud_demo_plugin PRIVATE ${AE_WIN_LINK})
     set_target_properties(hud_demo_plugin PROPERTIES PREFIX "" OUTPUT_NAME "hud")
 
-    # Mod de mapa (C1/C2): marca monstros, objetivos e saidas no automap.
+    # Mod de mapa (C1/C2): marca monstros, objetos e saidas no automap.
     add_library(map_overlay_plugin SHARED
         examples/map-overlay/map_overlay.cpp
         examples/map-overlay/map_logic.cpp)

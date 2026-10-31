@@ -28,6 +28,9 @@
 // Comandos do roteiro (um por linha; ';' comeca comentario):
 //   wait <ms>                  espera
 //   click <x> <y>              clique esquerdo em coordenadas do quadro 800x600
+//   rclick <x> <y>             clique direito (a habilidade do botao direito)
+//   move <x> <y>               so move o cursor
+//   closepanels                Esc ate nao restar painel lateral
 //   key <tecla> [vezes]        tab, esc, enter, space, up, down, left, right, f1..f12, letra
 //   type <texto>               WM_CHAR para cada caractere
 //   shot <nome>                pede <pasta do mod>\<nome>.bmp (gravado no proximo
@@ -40,6 +43,20 @@
 //   walk <nivel> <ms>          anda ate entrar no nivel (pela borda/saida que leva a ele)
 //   walkin <subtiles> <ms>     anda para longe da borda por onde entrou
 //   walkexit <nivel> <ms>      anda ate ver a posicao exata da saida para o nivel
+//   walkmode <left|right>      botao dos passos de walk fora da cidade (right:
+//                              Teletransporte; na cidade o jogo nao o permite)
+//   walkpoint <dx> <dy> <ms>   anda ate (jogador inicial + dx, dy) em subtiles
+//   waitlevel <nivel> <ms>     espera o jogador estar no nivel
+//   waitui <indice> <ms>       espera a entrada de estado de UI ligar
+//   clickmark <tipo> <ui|-1> <ms>  anda ate a marca mais perto e clica nela ate a
+//                              entrada de UI ligar (-1: ate o nivel mudar). Tipos:
+//                              npc, wp, blue, red, exit
+//   hover <tipo>               poe o cursor sobre a marca mais perto (o jogo mostra
+//                              o rotulo no proximo quadro). Tipos acima e monster,
+//                              minion, champion, unique, super, ally, other
+//   goto <tipo> <ms>           anda ate a marca mais perto ficar na tela
+//   sweep <tipo|none> <ms>     percorre o retangulo do nivel ate ver uma marca do tipo
+//   report <etiqueta>          linha com todas as contagens da varredura
 //   log <texto>
 
 #include <windows.h>
@@ -92,6 +109,17 @@ int g_walk_detour = 0;
 DWORD g_walk_detour_until = 0;
 int32_t g_entry_x = 0;
 int32_t g_entry_y = 0;
+bool g_walk_right = false;
+int32_t g_click_level = 0;
+
+// Estado do comando sweep: pontos do retangulo do nivel ainda nao visitados.
+struct SweepPoint {
+  int32_t x;
+  int32_t y;
+};
+std::vector<SweepPoint> g_sweep;
+bool g_sweep_active = false;
+DWORD g_sweep_since = 0;
 
 void Say(AeonianLogLevel level, const char* format, ...) __attribute__((format(printf, 2, 3)));
 void Say(AeonianLogLevel level, const char* format, ...) {
@@ -133,6 +161,15 @@ void Click(int x, int y) {
   MoveCursor(hwnd, static_cast<int>(w.x), static_cast<int>(w.y));
   PostMessageA(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(w.x, w.y));
   PostMessageA(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(w.x, w.y));
+}
+
+void RightClick(int x, int y) {
+  HWND hwnd = GameWindow();
+  if (hwnd == nullptr) return;
+  const POINT w = ToWindow(hwnd, x, y);
+  MoveCursor(hwnd, static_cast<int>(w.x), static_cast<int>(w.y));
+  PostMessageA(hwnd, WM_RBUTTONDOWN, MK_RBUTTON, MAKELPARAM(w.x, w.y));
+  PostMessageA(hwnd, WM_RBUTTONUP, 0, MAKELPARAM(w.x, w.y));
 }
 
 UINT KeyCode(const std::string& name) {
@@ -202,14 +239,20 @@ map_overlay::Scan ScanNow() {
 
 // Clica na tela na direcao (dx, dy) em pixels de cliente a partir do jogador,
 // girada `turn` graus (para contornar obstaculos).
-void ClickToward(double dx, double dy, double turn) {
+void ClickToward(double dx, double dy, double turn, bool right) {
   const double len = std::sqrt(dx * dx + dy * dy);
   if (len < 1.0) return;
   const double a = std::atan2(dy, dx) + turn * 3.14159265358979 / 180.0;
   const double r = len < 180.0 ? len : 180.0;
   const int x = 400 + static_cast<int>(std::lround(std::cos(a) * r));
   const int y = 285 + static_cast<int>(std::lround(std::sin(a) * r));
-  Click(x < 20 ? 20 : x > 780 ? 780 : x, y < 40 ? 40 : y > 520 ? 520 : y);
+  const int cx = x < 20 ? 20 : x > 780 ? 780 : x;
+  const int cy = y < 40 ? 40 : y > 520 ? 520 : y;
+  if (right) {
+    RightClick(cx, cy);
+  } else {
+    Click(cx, cy);
+  }
 }
 
 // Um passo do walk. Parado por mais de 1,2 s: anda perpendicular ao alvo
@@ -234,7 +277,7 @@ void WalkStep(const map_overlay::Scan& scan, double dx, double dy, DWORD now) {
   }
   double turn = 0.0;
   if (now < g_walk_detour_until) turn = g_walk_detour % 2 == 1 ? -90.0 : 90.0;
-  ClickToward(dx, dy, turn);
+  ClickToward(dx, dy, turn, g_walk_right && !map_overlay::IsTownLevel(scan.level_id));
 }
 
 // Alvo do walk: o ponto de saida (borda ou warp) para `level` mais perto do
@@ -247,7 +290,8 @@ bool WalkTarget(const map_overlay::Scan& scan, int32_t level, double* tx, double
     if (m.dest_level != level) continue;
     double x = m.x[0];
     double y = m.y[0];
-    if (m.kind == map_overlay::MarkKind::kPassage) {
+    if (m.kind == map_overlay::MarkKind::kPassage ||
+        m.kind == map_overlay::MarkKind::kPassageApprox) {
       // Ponto do segmento mais perto do jogador.
       const double sx = m.x[1] - m.x[0];
       const double sy = m.y[1] - m.y[0];
@@ -273,6 +317,94 @@ bool WalkTarget(const map_overlay::Scan& scan, int32_t level, double* tx, double
   return found;
 }
 
+bool MarkKindFromName(const std::string& name, map_overlay::MarkKind* kind) {
+  using map_overlay::MarkKind;
+  struct {
+    const char* name;
+    MarkKind kind;
+  } const kinds[] = {{"npc", MarkKind::kNpc},          {"wp", MarkKind::kWaypoint},
+                     {"blue", MarkKind::kPortalBlue},  {"red", MarkKind::kPortalRed},
+                     {"exit", MarkKind::kExit},         {"other", MarkKind::kPortalOther},
+                     {"monster", MarkKind::kMonster},  {"minion", MarkKind::kMinion},
+                     {"champion", MarkKind::kChampion}, {"unique", MarkKind::kUnique},
+                     {"super", MarkKind::kSuperUnique}, {"ally", MarkKind::kAlly}};
+  for (const auto& k : kinds) {
+    if (name == k.name) {
+      *kind = k.kind;
+      return true;
+    }
+  }
+  return false;
+}
+
+// A marca do tipo mais perto do jogador, em pixels de cliente relativos a ele.
+const map_overlay::Mark* NearestMark(const map_overlay::Scan& scan, map_overlay::MarkKind kind,
+                                     double* dx, double* dy) {
+  const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+  const map_overlay::Mark* best = nullptr;
+  double best_d = 0.0;
+  for (const map_overlay::Mark& m : scan.marks) {
+    if (m.kind != kind) continue;
+    const double x = m.x[0] - me.x;
+    const double y = m.y[0] - me.y;
+    const double d = x * x + y * y;
+    if (best == nullptr || d < best_d) {
+      best = &m;
+      best_d = d;
+      *dx = x;
+      *dy = y;
+    }
+  }
+  return best;
+}
+
+bool OnScreen(double dx, double dy) { return std::abs(dx) < 370.0 && std::abs(dy) < 240.0; }
+
+bool UiOn(int index) {
+  uint32_t value = 0;
+  return g_addr.ui_state != 0 && index >= 0 && index < 0x26 &&
+         map_overlay::ReadU32(g_mem, g_addr.ui_state + static_cast<uint32_t>(index) * 4, &value) &&
+         value != 0;
+}
+
+void Report(const char* tag) {
+  const map_overlay::Scan scan = ScanNow();
+  const map_overlay::ScanStats& s = scan.stats;
+  map_overlay::AutomapView view;
+  map_overlay::ReadAutomapView(g_mem, g_addr, &view);
+  Say(AEONIAN_LOG_INFO,
+      "MAPDRIVE report %s: ato=%d nivel=%d salas=%u/%u monstros=%u lacaios=%u campeoes=%u "
+      "unicos=%u superunicos=%u aliados=%u/%u npcs=%u wp=%u wp_sala=%u azul=%u vermelho=%u "
+      "outros=%u objetos=%u saidas=%u salas_warp=%u bordas=%u aprox=%u lado=%d quadro=%dx%d",
+      tag, scan.act_index + 1, scan.level_id, s.rooms_loaded, s.rooms, s.monsters, s.minions,
+      s.champions, s.uniques, s.superuniques, s.own_allies, s.allies, s.npcs, s.waypoints,
+      s.waypoint_rooms, s.portals_blue, s.portals_red, s.portals_other, s.objects, s.exits,
+      s.exit_rooms, s.passages, s.passages_approx, view.panel_side, view.frame_width,
+      view.frame_height);
+  for (const map_overlay::Mark& m : scan.marks) {
+    using map_overlay::MarkKind;
+    // Monstro hostil numa cidade e raro: a classe ajuda a conferir o filtro.
+    const bool town_monster = map_overlay::IsTownLevel(scan.level_id) &&
+                              (m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion);
+    const char* what = town_monster                       ? "monstro na cidade"
+                       : m.kind == MarkKind::kChampion    ? "campeao"
+                       : m.kind == MarkKind::kUnique      ? "unico"
+                       : m.kind == MarkKind::kSuperUnique ? "superunico"
+                       : m.kind == MarkKind::kAlly        ? "aliado"
+                       : m.kind == MarkKind::kWaypoint    ? "waypoint"
+                       : m.kind == MarkKind::kPortalBlue  ? "portal azul"
+                       : m.kind == MarkKind::kPortalRed   ? "portal vermelho"
+                       : m.kind == MarkKind::kPortalOther ? "portal outro"
+                       : m.kind == MarkKind::kExit        ? "saida exata"
+                       : m.kind == MarkKind::kExitRoom    ? "sala de warp"
+                                                          : nullptr;
+    if (what != nullptr) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE   %s classe=%d destino=%d lvlwarp=%d", what, m.unit_class,
+          m.dest_level, m.warp_class);
+    }
+  }
+}
+
 void Next() {
   ++g_pc;
   g_deadline = 0;
@@ -280,6 +412,7 @@ void Next() {
   g_walk_detour_until = 0;
   g_walk_detour = 0;
   g_walk_last_x = -1;
+  g_sweep_active = false;
 }
 
 // Executa o comando atual; devolve false enquanto ele ainda nao terminou.
@@ -298,6 +431,70 @@ bool Step(DWORD now) {
     int y = 0;
     std::sscanf(arg, "%d %d", &x, &y);
     Click(x, y);
+    return true;
+  }
+  if (c == "rclick") {
+    int x = 0;
+    int y = 0;
+    std::sscanf(arg, "%d %d", &x, &y);
+    RightClick(x, y);
+    return true;
+  }
+  if (c == "move") {
+    int x = 0;
+    int y = 0;
+    std::sscanf(arg, "%d %d", &x, &y);
+    HWND hwnd = GameWindow();
+    if (hwnd != nullptr) {
+      const POINT w = ToWindow(hwnd, x, y);
+      MoveCursor(hwnd, static_cast<int>(w.x), static_cast<int>(w.y));
+    }
+    return true;
+  }
+  if (c == "closepanels") {
+    if (g_deadline == 0) g_deadline = now + 3000;
+    map_overlay::AutomapView view;
+    if (!map_overlay::ReadAutomapView(g_mem, g_addr, &view) || view.panel_side == 0 ||
+        now >= g_deadline) {
+      return true;
+    }
+    if (now >= g_walk_next) {
+      g_walk_next = now + 500;
+      Key(VK_ESCAPE);
+    }
+    return false;
+  }
+  if (c == "walkmode") {
+    g_walk_right = std::strcmp(arg, "right") == 0;
+    return true;
+  }
+  if (c == "report") {
+    Report(arg);
+    return true;
+  }
+  if (c == "hover") {
+    map_overlay::MarkKind kind = map_overlay::MarkKind::kMonster;
+    const map_overlay::Scan scan = ScanNow();
+    double dx = 0.0;
+    double dy = 0.0;
+    HWND hwnd = GameWindow();
+    const map_overlay::Mark* mark =
+        MarkKindFromName(arg, &kind) ? NearestMark(scan, kind, &dx, &dy) : nullptr;
+    if (mark == nullptr || hwnd == nullptr || !OnScreen(dx, dy)) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE hover %s: nenhuma marca na tela", arg);
+      return true;
+    }
+    // A posicao e a dos pes; o corpo do monstro fica acima dela.
+    const int lift = kind == map_overlay::MarkKind::kPortalRed ||
+                             kind == map_overlay::MarkKind::kPortalBlue ||
+                             kind == map_overlay::MarkKind::kPortalOther
+                         ? 0
+                         : 24;
+    const POINT w =
+        ToWindow(hwnd, 400 + static_cast<int>(dx), 285 + static_cast<int>(dy) - lift);
+    MoveCursor(hwnd, static_cast<int>(w.x), static_cast<int>(w.y));
+    Say(AEONIAN_LOG_INFO, "MAPDRIVE hover %s: classe %d em (%+.0f,%+.0f)", arg, mark->unit_class,
+        dx, dy);
     return true;
   }
   if (c == "key") {
@@ -366,6 +563,176 @@ bool Step(DWORD now) {
           "MAPDRIVE FAIL automap nao ficou visivel no modo %d (visivel=%d modo=%d)",
           mode, view.visible ? 1 : 0, view.mode);
       g_failed = true;
+      return true;
+    }
+    return false;
+  }
+  if (c == "waitlevel" || c == "waitui") {
+    int value = 0;
+    long timeout = 0;
+    std::sscanf(arg, "%d %ld", &value, &timeout);
+    if (g_deadline == 0) g_deadline = now + static_cast<DWORD>(timeout);
+    const bool done = c == "waitui" ? UiOn(value) : ScanNow().level_id == value;
+    if (done) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE %s %d alcancado", c.c_str(), value);
+      return true;
+    }
+    if (now >= g_deadline) {
+      Say(AEONIAN_LOG_WARN, "MAPDRIVE %s %d: prazo esgotado", c.c_str(), value);
+      return true;
+    }
+    return false;
+  }
+  if (c == "clickmark") {
+    char name[32] = {};
+    int ui = -1;
+    long timeout = 0;
+    std::sscanf(arg, "%31s %d %ld", name, &ui, &timeout);
+    if (g_deadline == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+      g_click_level = ScanNow().level_id;
+    }
+    const map_overlay::Scan scan = ScanNow();
+    const bool left_level =
+        scan.in_game && scan.level_id != 0 && scan.level_id != g_click_level;
+    if (ui >= 0 ? UiOn(ui) : left_level) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE clickmark %s concluido no nivel %d", name, scan.level_id);
+      return true;
+    }
+    map_overlay::MarkKind kind = map_overlay::MarkKind::kNpc;
+    double dx = 0.0;
+    double dy = 0.0;
+    if (MarkKindFromName(name, &kind) && NearestMark(scan, kind, &dx, &dy) != nullptr) {
+      // Com Teletransporte, chega perto antes de clicar: um clique longe pode cair
+      // num monstro ou num painel que abriu.
+      const bool close_enough = g_walk_right && !map_overlay::IsTownLevel(scan.level_id)
+                                    ? std::hypot(dx, dy) < 120.0
+                                    : OnScreen(dx, dy);
+      if (close_enough) {
+        if (now >= g_walk_next) {
+          g_walk_next = now + 500;
+          Click(400 + static_cast<int>(dx), 285 + static_cast<int>(dy));
+        }
+      } else {
+        WalkStep(scan, dx, dy, now);
+      }
+    } else if (kind == map_overlay::MarkKind::kWaypoint) {
+      // Sala do waypoint ainda nao carregada: anda ate o centro dela.
+      const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+      for (const map_overlay::Mark& m : scan.marks) {
+        if (m.kind != map_overlay::MarkKind::kWaypointRoom) continue;
+        WalkStep(scan, (m.x[0] + m.x[1] + m.x[2] + m.x[3]) / 4.0 - me.x,
+                 (m.y[0] + m.y[1] + m.y[2] + m.y[3]) / 4.0 - me.y, now);
+        break;
+      }
+    }
+    if (now >= g_deadline) {
+      Say(AEONIAN_LOG_WARN, "MAPDRIVE clickmark %s: prazo esgotado no nivel %d em (%d,%d)", name,
+          scan.level_id, scan.player_x, scan.player_y);
+      return true;
+    }
+    return false;
+  }
+  if (c == "goto") {
+    char name[32] = {};
+    long timeout = 0;
+    std::sscanf(arg, "%31s %ld", name, &timeout);
+    if (g_deadline == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+    }
+    const map_overlay::Scan scan = ScanNow();
+    map_overlay::MarkKind kind = map_overlay::MarkKind::kNpc;
+    double dx = 0.0;
+    double dy = 0.0;
+    const map_overlay::Mark* mark =
+        MarkKindFromName(name, &kind) ? NearestMark(scan, kind, &dx, &dy) : nullptr;
+    if (mark == nullptr || now >= g_deadline) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE goto %s: sem marca ou prazo esgotado", name);
+      return true;
+    }
+    if (std::abs(dx) < 200.0 && std::abs(dy) < 130.0) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE goto %s: classe %d na tela", name, mark->unit_class);
+      return true;
+    }
+    WalkStep(scan, dx, dy, now);
+    return false;
+  }
+  if (c == "sweep") {
+    char name[32] = {};
+    long timeout = 0;
+    std::sscanf(arg, "%31s %ld", name, &timeout);
+    const map_overlay::Scan scan = ScanNow();
+    if (!g_sweep_active) {
+      g_sweep_active = true;
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+      g_sweep_since = now;
+      g_sweep.clear();
+      constexpr int32_t kStep = 60;  // subtiles: as salas em volta carregam
+      const map_overlay::TileRect& r = scan.level_rect;
+      for (int32_t y = r.y * 5 + kStep / 2; y < (r.y + r.h) * 5; y += kStep) {
+        for (int32_t x = r.x * 5 + kStep / 2; x < (r.x + r.w) * 5; x += kStep) {
+          g_sweep.push_back(SweepPoint{x, y});
+        }
+      }
+    }
+    map_overlay::MarkKind kind = map_overlay::MarkKind::kNpc;
+    double dx = 0.0;
+    double dy = 0.0;
+    if (MarkKindFromName(name, &kind) && NearestMark(scan, kind, &dx, &dy) != nullptr) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE sweep %s: achou no nivel %d", name, scan.level_id);
+      return true;
+    }
+    // Vai ao ponto mais perto; chegou ou passou 6 s nele, risca e segue.
+    size_t best = g_sweep.size();
+    int64_t best_d = 0;
+    for (size_t i = 0; i < g_sweep.size(); ++i) {
+      const int64_t ex = g_sweep[i].x - scan.player_x;
+      const int64_t ey = g_sweep[i].y - scan.player_y;
+      const int64_t d = ex * ex + ey * ey;
+      if (best == g_sweep.size() || d < best_d) {
+        best = i;
+        best_d = d;
+      }
+    }
+    if (best == g_sweep.size() || now >= g_deadline) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE sweep %s: terminou sem achar no nivel %d", name,
+          scan.level_id);
+      return true;
+    }
+    if (best_d < 20 * 20 || now - g_sweep_since > 6000) {
+      g_sweep.erase(g_sweep.begin() + static_cast<std::ptrdiff_t>(best));
+      g_sweep_since = now;
+      return false;
+    }
+    const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+    const map_overlay::Point to = map_overlay::SubtileToClient(g_sweep[best].x, g_sweep[best].y);
+    WalkStep(scan, to.x - me.x, to.y - me.y, now);
+    return false;
+  }
+  if (c == "walkpoint") {
+    long px = 0;
+    long py = 0;
+    long timeout = 0;
+    std::sscanf(arg, "%ld %ld %ld", &px, &py, &timeout);
+    const map_overlay::Scan scan = ScanNow();
+    if (g_deadline == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+      g_entry_x = scan.player_x;
+      g_entry_y = scan.player_y;
+    }
+    const int32_t tx = g_entry_x + static_cast<int32_t>(px);
+    const int32_t ty = g_entry_y + static_cast<int32_t>(py);
+    if (std::abs(scan.player_x - tx) + std::abs(scan.player_y - ty) < 8) return true;
+    const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+    const map_overlay::Point to = map_overlay::SubtileToClient(tx, ty);
+    WalkStep(scan, to.x - me.x, to.y - me.y, now);
+    if (now >= g_deadline) {
+      Say(AEONIAN_LOG_WARN, "MAPDRIVE walkpoint: prazo esgotado em (%d,%d)", scan.player_x,
+          scan.player_y);
       return true;
     }
     return false;

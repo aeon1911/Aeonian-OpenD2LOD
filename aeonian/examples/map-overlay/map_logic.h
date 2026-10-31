@@ -63,6 +63,13 @@ struct GameAddresses {
   uint32_t automap_offset_x = 0;
   uint32_t automap_offset_y = 0;
   uint32_t automap_clip = 0;     // RECT: esquerda, topo, direita, base
+  uint32_t panel_side = 0;       // lado dos paineis abertos (0..3)
+  uint32_t ui_state = 0;         // array de estado de UI (0x26 entradas)
+  uint32_t frame_width = 0;      // largura do quadro do jogo
+  uint32_t frame_height = 0;     // altura do quadro do jogo
+  uint32_t ally_list = 0;        // cabeca da lista de aliados
+  uint32_t objects_base = 0;     // ponteiro para os registros de objects
+  uint32_t objects_count = 0;    // quantidade de registros de objects
 };
 
 // Um global dentro dos bytes de uma ancora: o DWORD little-endian em `offset`
@@ -105,6 +112,10 @@ enum Feature : uint32_t {
   kFeatureObjectUnits = 1u << 2,  // objetos/saidas tambem pela tabela de unidades
   kFeatureLevelLinks = 1u << 3,   // Vis/Warp de LevelDefs (destino das saidas)
   kFeatureClip = 1u << 4,         // recorte do automap
+  kFeatureAllies = 1u << 5,       // lista de aliados (mercenario, invocacoes)
+  kFeatureObjectTable = 1u << 6,  // colunas de objects (waypoints, portais)
+  kFeaturePanels = 1u << 7,       // paineis abertos
+  kFeatureFrameSize = 1u << 8,    // tamanho do quadro do jogo
 };
 uint32_t AvailableFeatures(const GameAddresses& addr);
 
@@ -121,16 +132,36 @@ struct AutomapView {
   int32_t divisor = 0;  // 10 (modo 0) ou 20 (modo 1)
   int32_t offset_x = 0;
   int32_t offset_y = 0;
+  // Recorte do jogo, ja cortado pelo painel aberto (ver ApplyPanelRules).
   bool has_clip = false;
   int32_t clip_left = 0;
   int32_t clip_top = 0;
   int32_t clip_right = 0;
   int32_t clip_bottom = 0;
+  int32_t frame_width = 0;   // 0 = desconhecido
+  int32_t frame_height = 0;
+  int32_t panel_side = 0;    // 0 nenhum, 1 direita, 2 esquerda, 3 os dois lados
+  bool npc_dialog = false;   // UI 8: nao muda o lado
+  bool esc_menu = false;     // UI 9
+  bool help = false;         // UI 33
+  bool blocked = false;      // nada pode ser desenhado (ver ApplyPanelRules)
 };
 
-// Le o estado do automap. false se faltar algum global obrigatorio.
+// Le o estado do automap e aplica os paineis. false se faltar algum global
+// obrigatorio.
 bool ReadAutomapView(const MemoryView& mem, const GameAddresses& addr,
                      AutomapView* out);
+
+// Regras de painel (L sec. 5.4), a partir dos campos ja lidos: lado 3, dialogo
+// de NPC, menu e ajuda bloqueiam o desenho; em tela cheia, um painel lateral
+// corta o recorte na metade do quadro (o recorte do jogo nao o exclui). No
+// minimapa o proprio recorte do jogo ja acompanha o painel.
+void ApplyPanelRules(AutomapView* view);
+
+// O jogo desenha o automap e nada o esconde por inteiro.
+inline bool AutomapDrawable(const AutomapView& view) {
+  return view.visible && !view.blocked;
+}
 
 // Subtiles -> coordenada de cliente: cx = (x - y)*16, cy = (x + y)*8.
 Point SubtileToClient(int32_t x, int32_t y);
@@ -149,25 +180,35 @@ bool InsideClip(const Point& p, const AutomapView& view);
 
 enum class MarkKind : uint8_t {
   kMonster,      // monstro hostil normal
+  kMinion,       // lacaio de um chefe
   kChampion,
   kUnique,
   kSuperUnique,
+  kAlly,         // mercenario ou invocacao (lista de aliados)
   kNpc,          // NPC (monstats bit 0x100)
-  kObject,       // objeto marcado como objetivo (classe na configuracao)
+  kObject,       // objeto da configuracao ([objects])
+  kWaypoint,     // waypoint (SubClass 0x40)
+  kWaypointRoom, // sala com waypoint ainda nao carregada (aproximado)
+  kPortalBlue,   // portal da cidade (classe 59)
+  kPortalRed,    // portal vermelho (classe 60)
+  kPortalOther,  // demais portais por objeto (SubClass 0x10)
   kExit,         // saida por warp com posicao exata (tile/predefinida tipo 5)
   kExitRoom,     // sala que contem um warp ainda nao carregado (aproximado)
   kPassage,      // borda aberta com uma sala de outro nivel
+  kPassageApprox,  // trecho comum dos retangulos de dois niveis (aproximado)
 };
 
 struct Mark {
   MarkKind kind = MarkKind::kMonster;
   uint8_t points = 1;     // 1 ponto, 2 (segmento) ou 4 (contorno da sala)
   bool primary = false;   // kPassage: o segmento que leva o rotulo do destino
+  bool own = false;       // kAlly: o dono e o jogador local
   int32_t x[4] = {};      // coordenadas de cliente
   int32_t y[4] = {};
   int32_t dest_level = -1;  // saidas: id do nivel de destino (-1 = ?)
   int32_t warp_class = -1;  // saidas por warp: id de lvlwarp
   int32_t label = -1;       // kObject: indice em ScanOptions::objects
+  int32_t unit_class = -1;  // monstros e objetos: linha de monstats/objects
 };
 
 struct ObjectLabel {
@@ -177,13 +218,11 @@ struct ObjectLabel {
 
 struct ScanOptions {
   bool monsters = true;
+  bool allies = true;
   bool npcs = true;
-  bool objects = true;
+  bool objects = true;  // waypoints, portais e os da configuracao
   bool exits = true;
   bool only_current_level = true;
-  // Salas candidatas a conter o mesmo warp acima disto: o sinal nao e
-  // confiavel e as aproximacoes daquele warp sao descartadas.
-  uint32_t max_exit_rooms = 3;
   std::vector<ObjectLabel> objects_to_mark;
 };
 
@@ -192,28 +231,61 @@ struct ScanStats {
   uint32_t rooms_loaded = 0;
   uint32_t presets = 0;
   uint32_t units = 0;
-  uint32_t monsters = 0;
+  uint32_t monsters = 0;  // hostis, incluindo lacaios e chefes
+  uint32_t minions = 0;
   uint32_t champions = 0;
   uint32_t uniques = 0;
   uint32_t superuniques = 0;
+  uint32_t allies = 0;
+  uint32_t own_allies = 0;
   uint32_t npcs = 0;
-  uint32_t objects = 0;
+  uint32_t objects = 0;  // os da configuracao
+  uint32_t waypoints = 0;
+  uint32_t waypoint_rooms = 0;
+  uint32_t portals_blue = 0;
+  uint32_t portals_red = 0;
+  uint32_t portals_other = 0;
   uint32_t exits = 0;
   uint32_t exit_rooms = 0;
   uint32_t passages = 0;
+  uint32_t passages_approx = 0;
   uint32_t passage_levels = 0;
+};
+
+struct TileRect {
+  int32_t x = 0;
+  int32_t y = 0;
+  int32_t w = 0;
+  int32_t h = 0;
+};
+
+// Sala do nivel atual com o bit de um warp real (L sec. 4.2).
+struct WarpRoom {
+  uint32_t room = 0;  // Room2*
+  int32_t x = 0;      // tiles
+  int32_t y = 0;
+  int32_t w = 0;
+  int32_t h = 0;
+  int n = 0;
+  bool loaded = false;      // Room2+0x30 != 0
+  uint16_t load_count = 0;  // Room2+0x0E
 };
 
 struct Scan {
   bool in_game = false;
   int32_t level_id = 0;  // 0 = desconhecido
   uint32_t level = 0;    // Level*
+  TileRect level_rect;
+  uint32_t act = 0;      // Act* do cliente
+  int32_t act_index = -1;  // 0 = Ato I
+  uint32_t player_room = 0;  // Room1* do jogador
   bool links_ok = false;
   int32_t vis[8] = {};
   int32_t warp[8] = {};
   int32_t player_x = 0;  // subtiles
   int32_t player_y = 0;
   std::vector<Mark> marks;
+  std::vector<WarpRoom> warp_rooms;
   ScanStats stats;
 };
 
@@ -228,30 +300,44 @@ bool ReadLevelLinks(const MemoryView& mem, const GameAddresses& addr,
                     uint32_t level, int32_t level_id, int32_t vis[8],
                     int32_t warp[8]);
 
+// Sala de warp que pode ser ativada para revelar a posicao exata da saida
+// (L sec. 3.1): sala fora de `done`, nao carregada, sem carga do servidor e cujo
+// warp ainda nao tem posicao exata. nullptr se nao houver.
+const WarpRoom* NextRoomToReveal(const Scan& scan, const std::vector<uint32_t>& done);
+
 // --- Classificacao ---------------------------------------------------------
 
 enum class MonsterClass : uint8_t {
   kHidden,  // morto, ambiente da cidade etc.
   kNormal,
+  kMinion,
   kChampion,
   kUnique,
   kSuperUnique,
+  kAlly,
   kNpc,
 };
 
 // mode: Unit+0x10; monstats_flags: registro de monstats +0x0C; type_flags:
-// MonsterData+0x16.
+// MonsterData+0x16; is_ally: o id da unidade esta na lista de aliados.
 MonsterClass ClassifyMonster(uint32_t mode, uint32_t monstats_flags,
-                             uint8_t type_flags);
+                             uint8_t type_flags, bool is_ally);
+
+enum class ObjectKind : uint8_t {
+  kOther,
+  kWaypoint,
+  kPortalBlue,
+  kPortalRed,
+  kPortalOther,
+};
+
+// object_class: linha de objects; sub_class: coluna SubClass do registro.
+ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class);
+
+// Niveis de cidade (L sec. 2.8).
+bool IsTownLevel(int32_t level_id);
 
 // --- Geometria -------------------------------------------------------------
-
-struct TileRect {
-  int32_t x = 0;
-  int32_t y = 0;
-  int32_t w = 0;
-  int32_t h = 0;
-};
 
 // Lado comum (com comprimento > 0) de dois retangulos encostados, em tiles.
 bool SharedEdge(const TileRect& a, const TileRect& b, Point* from, Point* to);

@@ -31,3 +31,37 @@ ensuremode 1
 automap 1 8000
 wait 1200
 shot e02_cidade_minimapa
+; Paineis: as marcas ficam so na metade livre do quadro e somem com os dois lados.
+; O cursor fica na metade livre: ele e animado e mudaria o painel entre dois quadros.
+wait 200
+ensuremode 0
+automap 0 8000
+wait 800
+move 150 300
+key i
+wait 1000
+shot e03_painel_direita
+wait 200
+key f11
+wait 800
+shot e03b_painel_direita_sem_marcas
+key f11
+wait 300
+key i
+wait 400
+move 650 300
+key c
+wait 1000
+shot e04_painel_esquerda
+wait 200
+key f11
+wait 800
+shot e04b_painel_esquerda_sem_marcas
+key f11
+wait 300
+key i
+wait 800
+key i
+wait 300
+key c
+wait 500

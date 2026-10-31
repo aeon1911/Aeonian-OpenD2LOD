@@ -17,10 +17,10 @@
 // Mod de mapa (C1/C2 do docs/ROADMAP.md): com o automap do jogo aberto (tela
 // cheia ou minimapa), desenha por cima dele
 //
-//  * os monstros vivos do nivel atual, com destaque para campeao, unico e
-//    superunico;
-//  * os objetivos que a spec permite identificar (NPCs e os objetos da
-//    configuracao, como o waypoint);
+//  * os monstros vivos do nivel atual, com destaque para lacaio, campeao, unico
+//    e superunico, e os aliados (mercenario, invocacoes) a parte;
+//  * os NPCs, os waypoints e os portais (pelas colunas do proprio jogo) e os
+//    objetos da configuracao;
 //  * as saidas do nivel: warps (cavernas, escadas) e bordas abertas com
 //    outros niveis.
 //
@@ -29,6 +29,11 @@
 // quadros em que o jogo desenhou o automap). A leitura acontece no on_tick
 // (thread principal); o on_present so desenha a ultima lista publicada, porque
 // no D2GL ele roda na thread de renderizacao.
+//
+// A excecao e a opcao reveal_exits, DESLIGADA por padrao: ela chama AddRoomData
+// e RemoveRoomData do jogo na sala de um warp para saber a posicao exata da
+// saida antes de chegar perto (spec de niveis sec. 3.1, testado so no Ato I,
+// Normal, um jogador, em sessoes curtas).
 
 #include <windows.h>
 
@@ -75,6 +80,10 @@ constexpr DWORD kDrawnWindowMs = 300;
 // Intervalo minimo entre dois resumos no log.
 constexpr DWORD kSummaryEveryMs = 5000;
 
+// Funcoes do jogo usadas so com reveal_exits (spec de niveis sec. 3).
+using RoomDataFn = void(__stdcall*)(uint32_t act, int32_t level_id, int32_t tile_x,
+                                    int32_t tile_y, uint32_t near_room);
+
 const AeonianHost* g_host = nullptr;
 
 struct Config {
@@ -85,6 +94,7 @@ struct Config {
   bool labels = true;
   bool status = true;
   bool draw_hook = true;
+  bool reveal_exits = false;
   DWORD refresh_ms = 100;
   int32_t game_width = 800;
   int32_t game_height = 600;
@@ -125,7 +135,7 @@ map_overlay::GameMemory g_mem;  // so a thread principal usa
 struct Counts {
   uint32_t monsters = 0;
   uint32_t special = 0;  // campeoes + unicos + superunicos
-  uint32_t objectives = 0;
+  uint32_t objects = 0;  // waypoints, portais e os da configuracao
   uint32_t exits = 0;
 };
 
@@ -157,6 +167,15 @@ uint32_t g_scans = 0;
 double g_scan_ms_total = 0.0;
 double g_scan_ms_max = 0.0;
 LONG g_present_draws = 0;  // so o on_present da thread principal
+AutomapView g_logged_panels;
+bool g_panels_logged = false;
+RoomDataFn g_add_room_data = nullptr;
+RoomDataFn g_remove_room_data = nullptr;
+uint32_t g_reveal_act = 0;
+std::vector<uint32_t> g_revealed;  // salas ja ativadas neste ato
+uint32_t g_reveals = 0;
+double g_reveal_ms_total = 0.0;
+double g_reveal_ms_max = 0.0;
 
 // --- Configuracao ------------------------------------------------------------
 
@@ -217,7 +236,6 @@ bool ParseKey(const std::string& text, Config* cfg) {
 
 void LoadConfig() {
   Config cfg;
-  cfg.scan.objects_to_mark.push_back(map_overlay::ObjectLabel{119, "WP"});
   const std::string path = std::string(g_host->mod_dir) + "\\map-overlay.ini";
   std::string text;
   if (!ReadFileText(path, &text)) {
@@ -230,6 +248,7 @@ void LoadConfig() {
       Logf(AEONIAN_LOG_WARN, "toggle_key '%s' invalida; usando f11", key.c_str());
     }
     cfg.scan.monsters = ini.GetBool("overlay", "monsters", true);
+    cfg.scan.allies = ini.GetBool("overlay", "allies", true);
     cfg.scan.npcs = ini.GetBool("overlay", "npcs", true);
     cfg.scan.objects = ini.GetBool("overlay", "objects", true);
     cfg.scan.exits = ini.GetBool("overlay", "exits", true);
@@ -237,6 +256,7 @@ void LoadConfig() {
     cfg.labels = ini.GetBool("overlay", "labels", true);
     cfg.status = ini.GetBool("overlay", "status", true);
     cfg.draw_hook = ini.GetBool("overlay", "draw_hook", true);
+    cfg.reveal_exits = ini.GetBool("overlay", "reveal_exits", false);
     const int64_t refresh = ini.GetInt("overlay", "refresh_ms", 100);
     cfg.refresh_ms = static_cast<DWORD>(refresh < 20 ? 20 : refresh > 2000 ? 2000 : refresh);
     const int64_t gw = ini.GetInt("d2gl", "game_width", 800);
@@ -247,14 +267,13 @@ void LoadConfig() {
     }
     cfg.keep_aspect = ini.GetBool("d2gl", "keep_aspect", true);
     cfg.use_d2gl_ini = ini.GetBool("d2gl", "use_d2gl_ini", true);
-    if (ini.HasSection("objects")) {
-      cfg.scan.objects_to_mark.clear();
-      for (const auto& [k, v] : ini.Section("objects")) {
-        const auto id = aeonian::ParseInt(k);
-        if (!id || *id < 0 || *id > 0xFFFF) continue;
-        cfg.scan.objects_to_mark.push_back(
-            map_overlay::ObjectLabel{static_cast<uint32_t>(*id), v});
-      }
+    // Waypoints e portais vem das colunas do jogo. Objetos de quest nao tem coluna
+    // propria (spec de unidades sec. 5.1): so aparecem se configurados aqui.
+    for (const auto& [k, v] : ini.Section("objects")) {
+      const auto id = aeonian::ParseInt(k);
+      if (!id || *id < 0 || *id > 0xFFFF) continue;
+      cfg.scan.objects_to_mark.push_back(
+          map_overlay::ObjectLabel{static_cast<uint32_t>(*id), v});
     }
     for (const auto& [k, v] : ini.Section("level_names")) {
       const auto id = aeonian::ParseInt(k);
@@ -317,13 +336,32 @@ void ResolveSymbols() {
       {map_overlay::kFeatureObjectUnits, "objetos/saidas pela tabela de unidades"},
       {map_overlay::kFeatureLevelLinks, "destino das saidas e salas de warp (Vis/Warp)"},
       {map_overlay::kFeatureClip, "recorte do automap"},
+      {map_overlay::kFeatureAllies, "lista de aliados (mercenario e invocacoes viram hostis)"},
+      {map_overlay::kFeatureObjectTable, "colunas de objects (waypoints e portais)"},
+      {map_overlay::kFeaturePanels, "paineis abertos (marcas podem cobrir paineis)"},
+      {map_overlay::kFeatureFrameSize, "tamanho do quadro (usa [d2gl] game_width/height)"},
   };
   for (const auto& f : features) {
     if ((g_features & f.bit) == 0) Logf(AEONIAN_LOG_WARN, "recurso desligado: %s", f.what);
   }
   if ((g_features & map_overlay::kFeatureMonsters) == 0) {
     g_cfg.scan.monsters = false;
+    g_cfg.scan.allies = false;
     g_cfg.scan.npcs = false;
+  }
+  if (g_cfg.reveal_exits) {
+    g_add_room_data = reinterpret_cast<RoomDataFn>(
+        g_host->resolve_symbol(g_host, "D2Common.AddRoomData"));
+    g_remove_room_data = reinterpret_cast<RoomDataFn>(
+        g_host->resolve_symbol(g_host, "D2Common.RemoveRoomData"));
+    if (g_add_room_data == nullptr || g_remove_room_data == nullptr) {
+      g_add_room_data = nullptr;
+      g_remove_room_data = nullptr;
+      Logf(AEONIAN_LOG_WARN, "reveal_exits ligado, mas AddRoomData/RemoveRoomData nao resolveram");
+    } else {
+      Logf(AEONIAN_LOG_WARN,
+           "reveal_exits LIGADO: experimental, so um jogador (spec de niveis sec. 3.1)");
+    }
   }
 }
 
@@ -362,16 +400,21 @@ Counts CountOf(const map_overlay::ScanStats& s) {
   Counts c;
   c.monsters = s.monsters;
   c.special = s.champions + s.uniques + s.superuniques;
-  c.objectives = s.objects + s.npcs + s.superuniques;
+  c.objects = s.objects + s.waypoints + s.waypoint_rooms + s.portals_blue + s.portals_red +
+              s.portals_other;
   c.exits = s.exits + s.exit_rooms + s.passage_levels;
   return c;
 }
 
 bool SameCounts(const map_overlay::ScanStats& a, const map_overlay::ScanStats& b) {
-  return a.rooms_loaded == b.rooms_loaded && a.monsters == b.monsters &&
+  return a.rooms_loaded == b.rooms_loaded && a.monsters == b.monsters && a.minions == b.minions &&
          a.champions == b.champions && a.uniques == b.uniques &&
-         a.superuniques == b.superuniques && a.npcs == b.npcs && a.objects == b.objects &&
-         a.exits == b.exits && a.exit_rooms == b.exit_rooms && a.passages == b.passages;
+         a.superuniques == b.superuniques && a.allies == b.allies && a.npcs == b.npcs &&
+         a.objects == b.objects && a.waypoints == b.waypoints &&
+         a.waypoint_rooms == b.waypoint_rooms && a.portals_blue == b.portals_blue &&
+         a.portals_red == b.portals_red && a.portals_other == b.portals_other &&
+         a.exits == b.exits && a.exit_rooms == b.exit_rooms && a.passages == b.passages &&
+         a.passages_approx == b.passages_approx;
 }
 
 // Resumo no log: ao trocar de nivel e, depois, quando as contagens mudam
@@ -386,25 +429,105 @@ void LogSummary(const AutomapView& view, DWORD now) {
   g_summary_stats = s;
   g_last_summary_ms = now;
   Logf(AEONIAN_LOG_INFO,
-       "nivel %d: %u salas (%u carregadas), %u predefinidas, %u monstros (%u campeoes, %u "
-       "unicos, %u superunicos), %u NPCs, %u objetos, %u saidas exatas, %u salas de warp, %u "
-       "trechos de borda para %u nivel(is); Vis/Warp %s; jogador (%d,%d); varredura media "
-       "%.3f ms, maxima %.3f ms",
-       g_scan.level_id, s.rooms, s.rooms_loaded, s.presets, s.monsters, s.champions, s.uniques,
-       s.superuniques, s.npcs, s.objects, s.exits, s.exit_rooms, s.passages, s.passage_levels,
-       g_scan.links_ok ? "lidos" : "indisponiveis", g_scan.player_x, g_scan.player_y,
-       g_scans != 0 ? g_scan_ms_total / g_scans : 0.0, g_scan_ms_max);
+       "nivel %d: %u salas (%u carregadas), %u predefinidas, %u monstros (%u lacaios, %u "
+       "campeoes, %u unicos, %u superunicos), %u aliados (%u do jogador), %u NPCs, %u waypoints "
+       "(%u pela sala), %u portais azuis, %u vermelhos, %u outros, %u objetos, %u saidas exatas, "
+       "%u salas de warp, %u trechos de borda para %u nivel(is) (%u aproximados); Vis/Warp %s; "
+       "ato %d%s; jogador (%d,%d); varredura media %.3f ms, maxima %.3f ms",
+       g_scan.level_id, s.rooms, s.rooms_loaded, s.presets, s.monsters, s.minions, s.champions,
+       s.uniques, s.superuniques, s.allies, s.own_allies, s.npcs, s.waypoints, s.waypoint_rooms,
+       s.portals_blue, s.portals_red, s.portals_other, s.objects, s.exits, s.exit_rooms,
+       s.passages, s.passage_levels, s.passages_approx,
+       g_scan.links_ok ? "lidos" : "indisponiveis", g_scan.act_index + 1,
+       map_overlay::IsTownLevel(g_scan.level_id) ? " (cidade)" : "", g_scan.player_x,
+       g_scan.player_y, g_scans != 0 ? g_scan_ms_total / g_scans : 0.0, g_scan_ms_max);
   for (const Mark& m : g_scan.marks) {
-    if (m.kind == MarkKind::kExit || m.kind == MarkKind::kExitRoom ||
-        (m.kind == MarkKind::kPassage && m.primary)) {
-      const map_overlay::Point p = map_overlay::ClientToAutomap(m.x[0], m.y[0], view);
-      Logf(AEONIAN_LOG_INFO, "  saida %s -> nivel %d (lvlwarp %d), automap (%d,%d)",
-           m.kind == MarkKind::kExit       ? "exata"
-           : m.kind == MarkKind::kExitRoom ? "na sala"
-                                           : "pela borda",
-           m.dest_level, m.warp_class, p.x, p.y);
+    const map_overlay::Point p = map_overlay::ClientToAutomap(m.x[0], m.y[0], view);
+    switch (m.kind) {
+      case MarkKind::kExit:
+      case MarkKind::kExitRoom:
+      case MarkKind::kPassage:
+      case MarkKind::kPassageApprox:
+        if ((m.kind == MarkKind::kPassage || m.kind == MarkKind::kPassageApprox) && !m.primary) {
+          break;
+        }
+        Logf(AEONIAN_LOG_INFO, "  saida %s -> nivel %d (lvlwarp %d), automap (%d,%d)",
+             m.kind == MarkKind::kExit             ? "exata"
+             : m.kind == MarkKind::kExitRoom       ? "na sala"
+             : m.kind == MarkKind::kPassageApprox  ? "pela borda (aproximada)"
+                                                   : "pela borda",
+             m.dest_level, m.warp_class, p.x, p.y);
+        break;
+      case MarkKind::kWaypoint:
+        Logf(AEONIAN_LOG_INFO, "  waypoint classe %d, automap (%d,%d)", m.unit_class, p.x, p.y);
+        break;
+      case MarkKind::kWaypointRoom:
+        Logf(AEONIAN_LOG_INFO, "  waypoint na sala, automap (%d,%d)", p.x, p.y);
+        break;
+      case MarkKind::kPortalBlue:
+      case MarkKind::kPortalRed:
+      case MarkKind::kPortalOther:
+        Logf(AEONIAN_LOG_INFO, "  portal %s classe %d -> nivel %d, automap (%d,%d)",
+             m.kind == MarkKind::kPortalBlue  ? "azul"
+             : m.kind == MarkKind::kPortalRed ? "vermelho"
+                                              : "outro",
+             m.unit_class, m.dest_level, p.x, p.y);
+        break;
+      case MarkKind::kAlly:
+        Logf(AEONIAN_LOG_INFO, "  aliado classe %d (%s), automap (%d,%d)", m.unit_class,
+             m.own ? "do jogador" : "de outro dono", p.x, p.y);
+        break;
+      default:
+        break;
     }
   }
+}
+
+// Registra cada mudanca de painel, com o recorte que passou a valer.
+void LogPanels(const AutomapView& view) {
+  const AutomapView& old = g_logged_panels;
+  if (g_panels_logged && view.panel_side == old.panel_side && view.npc_dialog == old.npc_dialog &&
+      view.esc_menu == old.esc_menu && view.help == old.help && view.mode == old.mode) {
+    return;
+  }
+  g_panels_logged = true;
+  g_logged_panels = view;
+  Logf(AEONIAN_LOG_INFO,
+       "paineis: lado %d, dialogo %d, menu %d, ajuda %d; marcas %s, modo %d, recorte "
+       "(%d,%d,%d,%d), quadro %dx%d",
+       view.panel_side, view.npc_dialog ? 1 : 0, view.esc_menu ? 1 : 0, view.help ? 1 : 0,
+       view.blocked ? "ocultas" : "visiveis", view.mode, view.clip_left, view.clip_top,
+       view.clip_right, view.clip_bottom, view.frame_width, view.frame_height);
+}
+
+// Ativa e devolve a sala de um warp para o jogo criar a predefinida da saida
+// (spec de niveis sec. 3.1): uma sala por varredura, uma vez por sala, so na
+// thread principal e em partida. As predefinidas ficam depois de RemoveRoomData
+// e a proxima varredura as encontra. TODO(RE): multijogador, sessoes longas,
+// efeito no .ma0/.map e corrida com um pedido do servidor nao foram testados.
+void RevealNextExit() {
+  if (g_add_room_data == nullptr || g_scan.act == 0 || g_scan.player_room == 0 ||
+      g_scan.level_id <= 0) {
+    return;
+  }
+  const map_overlay::WarpRoom* room = map_overlay::NextRoomToReveal(g_scan, g_revealed);
+  if (room == nullptr) return;
+  LARGE_INTEGER freq;
+  LARGE_INTEGER t0;
+  LARGE_INTEGER t1;
+  QueryPerformanceFrequency(&freq);
+  QueryPerformanceCounter(&t0);
+  g_add_room_data(g_scan.act, g_scan.level_id, room->x, room->y, g_scan.player_room);
+  g_remove_room_data(g_scan.act, g_scan.level_id, room->x, room->y, g_scan.player_room);
+  QueryPerformanceCounter(&t1);
+  const double ms = 1000.0 * static_cast<double>(t1.QuadPart - t0.QuadPart) /
+                    static_cast<double>(freq.QuadPart);
+  g_revealed.push_back(room->room);
+  ++g_reveals;
+  g_reveal_ms_total += ms;
+  if (ms > g_reveal_ms_max) g_reveal_ms_max = ms;
+  Logf(AEONIAN_LOG_INFO, "reveal_exits: nivel %d, sala (%d,%d), warp %d -> nivel %d, %.3f ms",
+       g_scan.level_id, room->x, room->y, room->n, g_scan.vis[room->n], ms);
 }
 
 void Publish(bool active, const AutomapView& view, bool scanned) {
@@ -433,8 +556,15 @@ void OnTick(void*, uint32_t) {
       g_last_draw_ms = now;
     }
   }
+  // Outra partida ou outro ato: os ponteiros de sala anteriores nao valem mais.
+  uint32_t act = 0;
+  map_overlay::ReadU32(g_mem, g_addr.current_act, &act);
+  if (act != g_reveal_act) {
+    g_reveal_act = act;
+    g_revealed.clear();
+  }
   const bool drawn = !g_hooked || now - g_last_draw_ms <= kDrawnWindowMs;
-  const bool want = g_enabled && view_ok && view.visible && drawn;
+  const bool want = g_enabled && view_ok && map_overlay::AutomapDrawable(view) && drawn;
   bool scanned = false;
   if (want && (!g_was_active || now - g_last_scan_ms >= g_cfg.refresh_ms)) {
     LARGE_INTEGER freq;
@@ -458,12 +588,17 @@ void OnTick(void*, uint32_t) {
     if (g_scan.in_game && !g_logged_view) {
       g_logged_view = true;
       Logf(AEONIAN_LOG_INFO, "automap: modo %d, divisor %d, deslocamento (%d,%d), recorte %s"
-           " (%d,%d,%d,%d), gancho %s", view.mode, view.divisor, view.offset_x, view.offset_y,
-           view.has_clip ? "lido" : "ausente", view.clip_left, view.clip_top, view.clip_right,
-           view.clip_bottom, g_hooked ? "ativo" : "inativo");
+           " (%d,%d,%d,%d), gancho %s, quadro %dx%d", view.mode, view.divisor, view.offset_x,
+           view.offset_y, view.has_clip ? "lido" : "ausente", view.clip_left, view.clip_top,
+           view.clip_right, view.clip_bottom, g_hooked ? "ativo" : "inativo", view.frame_width,
+           view.frame_height);
     }
-    if (g_scan.in_game) LogSummary(view, now);
+    if (g_scan.in_game) {
+      LogSummary(view, now);
+      RevealNextExit();
+    }
   }
+  if (view_ok && act != 0 && g_scan.in_game) LogPanels(view);
   const bool active = want && g_scan.in_game;
   if (g_was_active && !active && !g_scan.in_game) g_in_game_logged = false;
   if (view_ok && view.mode != g_shared.view.mode) g_logged_view = false;  // modo trocado
@@ -474,6 +609,11 @@ void OnTick(void*, uint32_t) {
 // --- Desenho -----------------------------------------------------------------
 
 const COLORREF kMonsterColor = RGB(235, 45, 35);
+const COLORREF kMinionColor = RGB(255, 130, 190);
+const COLORREF kAllyColor = RGB(120, 255, 160);
+const COLORREF kPortalBlueColor = RGB(60, 120, 255);
+const COLORREF kPortalRedColor = RGB(255, 40, 40);
+const COLORREF kPortalOtherColor = RGB(200, 120, 255);
 const COLORREF kChampionColor = RGB(80, 150, 255);
 const COLORREF kUniqueColor = RGB(235, 195, 60);
 const COLORREF kSuperUniqueColor = RGB(255, 125, 20);
@@ -543,6 +683,16 @@ struct Painter {
     SelectObject(dc, old);
     DeleteObject(pen);
   }
+  void DashedLine(int x1, int y1, int x2, int y2, int width, COLORREF color) const {
+    constexpr int kDashes = 7;
+    for (int i = 0; i < kDashes; ++i) {
+      const int a = i * 2;
+      const int b = a + 1;
+      const int n = kDashes * 2 - 1;
+      Line(x1 + (x2 - x1) * a / n, y1 + (y2 - y1) * a / n, x1 + (x2 - x1) * b / n,
+           y1 + (y2 - y1) * b / n, width, color);
+    }
+  }
   void Room(const POINT (&pts)[4], COLORREF color) const {
     HPEN pen = CreatePen(PS_SOLID, S(2), color);
     HBRUSH hatch = CreateHatchBrush(HS_BDIAGONAL, color);
@@ -598,6 +748,12 @@ void DrawShape(const Painter& p, const ScreenMark& m) {
     case MarkKind::kMonster:
       p.Box(x, y, p.S(2), kMonsterColor);
       break;
+    case MarkKind::kMinion:
+      p.Box(x, y, p.S(2), kMinionColor);
+      break;
+    case MarkKind::kAlly:
+      p.Box(x, y, p.S(2), kAllyColor);
+      break;
     case MarkKind::kChampion:
       p.Box(x, y, p.S(3), kChampionColor);
       break;
@@ -612,18 +768,29 @@ void DrawShape(const Painter& p, const ScreenMark& m) {
       p.Ring(x, y, p.S(6), kNpcColor);
       break;
     case MarkKind::kObject:
+    case MarkKind::kWaypoint:
       p.Frame(x, y, p.S(6), kObjectColor);
+      break;
+    case MarkKind::kPortalBlue:
+      p.Ring(x, y, p.S(6), kPortalBlueColor);
+      break;
+    case MarkKind::kPortalRed:
+      p.Ring(x, y, p.S(6), kPortalRedColor);
+      break;
+    case MarkKind::kPortalOther:
+      p.Ring(x, y, p.S(6), kPortalOtherColor);
       break;
     case MarkKind::kExit:
       p.Box(x, y, p.S(4), kExitColor);
       break;
-    case MarkKind::kExitRoom: {
+    case MarkKind::kExitRoom:
+    case MarkKind::kWaypointRoom: {
       POINT pts[4];
       for (int i = 0; i < 4; ++i) {
         pts[i].x = p.X(m.x[i]);
         pts[i].y = p.Y(m.y[i]);
       }
-      p.Room(pts, kExitColor);
+      p.Room(pts, m.kind == MarkKind::kExitRoom ? kExitColor : kObjectColor);
       break;
     }
     case MarkKind::kPassage: {
@@ -633,6 +800,9 @@ void DrawShape(const Painter& p, const ScreenMark& m) {
       p.Line(x, y, x2, y2, p.S(2), kExitColor);
       break;
     }
+    case MarkKind::kPassageApprox:
+      p.DashedLine(x, y, p.X(m.x[1]), p.Y(m.y[1]), p.S(2), kExitColor);
+      break;
   }
 }
 
@@ -650,6 +820,29 @@ bool LabelOf(const Painter& p, const ScreenMark& m, std::wstring* text, int* x, 
       *x = p.X(m.x[0]) + p.S(9);
       *y = p.Y(m.y[0]) - p.S(7);
       return true;
+    case MarkKind::kWaypoint:
+      *text = L"WP";
+      *color = kObjectColor;
+      *x = p.X(m.x[0]) + p.S(9);
+      *y = p.Y(m.y[0]) - p.S(7);
+      return true;
+    case MarkKind::kWaypointRoom:
+      *text = L"WP (?)";
+      *color = kObjectColor;
+      *x = (p.X(m.x[0]) + p.X(m.x[1]) + p.X(m.x[2]) + p.X(m.x[3])) / 4 - p.S(10);
+      *y = (p.Y(m.y[0]) + p.Y(m.y[1]) + p.Y(m.y[2]) + p.Y(m.y[3])) / 4 - p.S(7);
+      return true;
+    case MarkKind::kPortalBlue:
+    case MarkKind::kPortalRed:
+    case MarkKind::kPortalOther:
+      *text = L"Portal";
+      if (m.dest_level > 0) *text += L" " + arrow + LevelName(m.dest_level);
+      *color = m.kind == MarkKind::kPortalBlue  ? kPortalBlueColor
+               : m.kind == MarkKind::kPortalRed ? kPortalRedColor
+                                                : kPortalOtherColor;
+      *x = p.X(m.x[0]) + p.S(9);
+      *y = p.Y(m.y[0]) - p.S(7);
+      return true;
     case MarkKind::kExit:
       *text = arrow + LevelName(m.dest_level);
       *x = p.X(m.x[0]) + p.S(8);
@@ -661,8 +854,10 @@ bool LabelOf(const Painter& p, const ScreenMark& m, std::wstring* text, int* x, 
       *y = (p.Y(m.y[0]) + p.Y(m.y[1]) + p.Y(m.y[2]) + p.Y(m.y[3])) / 4 - p.S(7);
       return true;
     case MarkKind::kPassage:
+    case MarkKind::kPassageApprox:
       if (!m.primary) return false;
       *text = arrow + LevelName(m.dest_level);
+      if (m.kind == MarkKind::kPassageApprox) *text += L" (?)";
       *x = (p.X(m.x[0]) + p.X(m.x[1])) / 2 + p.S(6);
       *y = (p.Y(m.y[0]) + p.Y(m.y[1])) / 2 - p.S(7);
       return true;
@@ -702,8 +897,8 @@ void DrawStatus(const Painter& p, int canvas_w, const Counts& c, int32_t level_i
   wchar_t buf[160];
   std::swprintf(buf, 160,
                 L"Aeonian mapa \u00b7 n\u00edvel %d \u00b7 %u monstros (%u especiais) \u00b7 %u "
-                L"objetivos \u00b7 %u sa\u00eddas",
-                level_id, c.monsters, c.special, c.objectives, c.exits);
+                L"objetos \u00b7 %u sa\u00eddas",
+                level_id, c.monsters, c.special, c.objects, c.exits);
   SetTextAlign(p.dc, TA_CENTER | TA_TOP);
   p.Text(canvas_w / 2, p.S(2), buf, kStatusColor);
   SetTextAlign(p.dc, TA_LEFT | TA_TOP);
@@ -743,21 +938,23 @@ void OnPresent(void*, AeonianCanvas* canvas) {
     g_mem.Reset();
     AutomapView fresh;
     if (map_overlay::ReadAutomapView(g_mem, g_addr, &fresh)) view = fresh;
-    if (!view.visible) return;
+    if (!map_overlay::AutomapDrawable(view)) return;
   } else {
-    // D2GL: o canvas tem o tamanho da area cliente e o quadro do jogo e
-    // encaixado nela pelo D2GL. TODO(RE): a resolucao do quadro (so 800x600
-    // observada, spec de niveis sec. 5.2) vem de [d2gl] na configuracao; o
-    // encaixe, do d2gl.ini (modelo observado, ver FitFrameD2gl).
+    // D2GL: o canvas tem o tamanho da area cliente e o quadro do jogo, cujo
+    // tamanho vem dos globais do jogo (spec de niveis sec. 5.5), e encaixado nela
+    // pelo D2GL. [d2gl] so vale se os globais faltarem. TODO(RE): nao ha spec do
+    // encaixe; o modelo do d2gl.ini e observado (ver FitFrameD2gl).
+    const int32_t frame_w = view.frame_width > 0 ? view.frame_width : g_cfg.game_width;
+    const int32_t frame_h = view.frame_height > 0 ? view.frame_height : g_cfg.game_height;
     if (g_cfg.d2gl_ini) {
       const bool full = g_cfg.d2gl_fullscreen;
-      map = map_overlay::FitFrameD2gl(g_cfg.game_width, g_cfg.game_height, canvas->width,
-                                      canvas->height, full ? canvas->width : g_cfg.d2gl_window_w,
+      map = map_overlay::FitFrameD2gl(frame_w, frame_h, canvas->width, canvas->height,
+                                      full ? canvas->width : g_cfg.d2gl_window_w,
                                       full ? canvas->height : g_cfg.d2gl_window_h,
                                       g_cfg.d2gl_stretch_h, g_cfg.d2gl_stretch_v);
     } else {
-      map = map_overlay::FitFrame(g_cfg.game_width, g_cfg.game_height, canvas->width,
-                                  canvas->height, g_cfg.keep_aspect);
+      map = map_overlay::FitFrame(frame_w, frame_h, canvas->width, canvas->height,
+                                  g_cfg.keep_aspect);
     }
   }
   map_overlay::ProjectMarks(marks, view, &screen);
@@ -775,17 +972,25 @@ void OnPresent(void*, AeonianCanvas* canvas) {
     IntersectClipRect(p.dc, p.X(view.clip_left), p.Y(view.clip_top), p.X(view.clip_right) + 1,
                       p.Y(view.clip_bottom) + 1);
   }
-  // Ordem: bordas e salas embaixo, depois saidas, objetivos e monstros.
+  // Ordem: bordas e salas embaixo, depois saidas, objetos, aliados e monstros.
   for (const ScreenMark& m : screen) {
-    if (m.kind == MarkKind::kPassage || m.kind == MarkKind::kExitRoom) DrawShape(p, m);
-  }
-  for (const ScreenMark& m : screen) {
-    if (m.kind == MarkKind::kExit || m.kind == MarkKind::kObject || m.kind == MarkKind::kNpc) {
+    if (m.kind == MarkKind::kPassage || m.kind == MarkKind::kPassageApprox ||
+        m.kind == MarkKind::kExitRoom || m.kind == MarkKind::kWaypointRoom) {
       DrawShape(p, m);
     }
   }
   for (const ScreenMark& m : screen) {
-    if (m.kind == MarkKind::kMonster) DrawShape(p, m);
+    if (m.kind == MarkKind::kExit || m.kind == MarkKind::kObject || m.kind == MarkKind::kNpc ||
+        m.kind == MarkKind::kWaypoint || m.kind == MarkKind::kPortalBlue ||
+        m.kind == MarkKind::kPortalRed || m.kind == MarkKind::kPortalOther) {
+      DrawShape(p, m);
+    }
+  }
+  for (const ScreenMark& m : screen) {
+    if (m.kind == MarkKind::kAlly) DrawShape(p, m);
+  }
+  for (const ScreenMark& m : screen) {
+    if (m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion) DrawShape(p, m);
   }
   for (const ScreenMark& m : screen) {
     if (m.kind == MarkKind::kChampion || m.kind == MarkKind::kUnique ||
@@ -794,7 +999,16 @@ void OnPresent(void*, AeonianCanvas* canvas) {
     }
   }
   RestoreDC(p.dc, saved);
-  if (g_cfg.labels) DrawLabels(p, screen, view);
+  if (g_cfg.labels) {
+    // Os rotulos podem passar do recorte do minimapa, mas nunca entram num painel.
+    const int saved_labels = SaveDC(p.dc);
+    if (view.has_clip && view.mode != 1 && view.panel_side != 0) {
+      IntersectClipRect(p.dc, p.X(view.clip_left), p.Y(view.clip_top), p.X(view.clip_right) + 1,
+                        p.Y(view.clip_bottom) + 1);
+    }
+    DrawLabels(p, screen, view);
+    RestoreDC(p.dc, saved_labels);
+  }
   // Evidencia no log (a cada 5 s, ou ao trocar de modo): o que foi desenhado.
   static DWORD last_log_ms = 0;
   static int32_t last_log_mode = -1;
@@ -802,11 +1016,12 @@ void OnPresent(void*, AeonianCanvas* canvas) {
   if (view.mode != last_log_mode || now - last_log_ms >= 5000) {
     last_log_ms = now;
     last_log_mode = view.mode;
-    Logf(AEONIAN_LOG_DEBUG, "quadro %u: %u marcas desenhadas (modo %d, canvas %dx%d, %s)",
-         canvas->frame, static_cast<unsigned>(screen.size()), view.mode, canvas->width,
-         canvas->height, on_main ? "thread principal" : "thread do D2GL");
+    Logf(AEONIAN_LOG_DEBUG, "quadro %u: %u marcas desenhadas (modo %d, lado %d, canvas %dx%d, %s)",
+         canvas->frame, static_cast<unsigned>(screen.size()), view.mode, view.panel_side,
+         canvas->width, canvas->height, on_main ? "thread principal" : "thread do D2GL");
   }
-  if (g_cfg.status) DrawStatus(p, canvas->width, counts, level_id);
+  // A linha de contagem fica no centro do topo: com painel aberto, cairia sobre ele.
+  if (g_cfg.status && view.panel_side == 0) DrawStatus(p, canvas->width, counts, level_id);
   SelectObject(p.dc, old_font);
 }
 
@@ -827,6 +1042,10 @@ void OnShutdown(void*) {
        "%u varreduras, media %.3f ms, maxima %.3f ms; DrawAutomap chamado %ld vez(es)",
        g_scans, g_scans != 0 ? g_scan_ms_total / g_scans : 0.0, g_scan_ms_max,
        static_cast<long>(g_ae_map_automap_draws));
+  if (g_add_room_data != nullptr) {
+    Logf(AEONIAN_LOG_INFO, "reveal_exits: %u salas, media %.3f ms, maxima %.3f ms", g_reveals,
+         g_reveals != 0 ? g_reveal_ms_total / g_reveals : 0.0, g_reveal_ms_max);
+  }
 }
 
 }  // namespace
