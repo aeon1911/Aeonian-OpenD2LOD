@@ -28,15 +28,15 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | VFS de mods (arquivos de `data\`) | ✅ | log + trace de arquivos do Wine |
 | Plugins + eventos + hook inline | ✅ | selftest dentro do `Game.exe` |
 | Falha segura (build desconhecida, `AEONIAN_DISABLE`) | ✅ | fases B/C da suíte |
-| Símbolos de código do jogo | ✅ 71 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho, painéis), com specs; 18 deles usados e verificados em jogo pelo `map-overlay` | `addresses/1.14d.ini`; suíte, fases A3 e E |
+| Símbolos de código do jogo | ✅ 79 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho, painéis), com specs; 19 deles usados e verificados em jogo pelo `map-overlay` | `addresses/1.14d.ini`; suíte, fases A3 e E |
 | `on_present` (overlay) GDI + D2GL/OpenGL, `request_screenshot`, mods API | ✅ | suíte: quadro do jogo gravado e comparado |
 | Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica e imagem completa com o **release oficial** v1.3.3 (Wine 11.20, RX 9070 XT, 2026-10-29); o instalador avisa se o D2GL não for oficial | [`modding/D2GL.md`](modding/D2GL.md) |
 | Mod de arte visível (botões recoloridos via VFS) | ✅ | diff de 11 mil pixels no menu |
 | Modo DirectDraw (`on_present`) | ⬜ código sem teste | o Wine não o ativou |
-| Mod de mapa C1/C2 (`map-overlay`: monstros, aliados, waypoints, portais e saídas sobre o automap) | 🟡 Atos I–V, um jogador; GDI em Normal, Pesadelo e Inferno; D2GL em Normal (janela 800×600 e 1280×720); painéis; 640×480 em GDI. Objetivos de quest só por configuração manual; classe 359 aparece como hostil na cidade do Ato III; `reveal_exits` experimental e desligado; D2GL em tela cheia **não visto** | [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md); suíte, fase E; quadros gravados |
+| Mod de mapa C1/C2 (`map-overlay`: monstros, aliados, amigos, waypoints, portais, objetivos de quest e saídas sobre o automap) | 🟡 Atos I–V, um jogador; GDI em Normal, Pesadelo e Inferno; D2GL em Normal (janela 800×600 e 1280×720); painéis; 640×480 em GDI. Objetivos pelo `OperateFn` (7 dos 24 valores vistos em jogo com o mod, Anya não alcançada); filtro de alinhamento; passagem exata pela colisão e pela regra do Ato I, aproximada e rotulada no resto; `reveal_exits` experimental e desligado; D2GL em tela cheia **não visto** | [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md); suíte, fase E; quadros gravados |
 | Estado do jogo: personagem; requisitos C3/C4 do client | ⬜ | M2.2 e "Requisitos do client" no [`ROADMAP.md`](ROADMAP.md) |
 | Windows nativo, Switch/Wine-NX | ⬜ **não testado** | — |
-| Medição de FPS em monitores de alta taxa/4K; D2GL dentro de uma partida | ⬜ **não medido / não visto** (ver D2GL.md) | — |
+| Medição de FPS em monitores de alta taxa/4K; outros monitores e GPUs | ⬜ **não medido** (a imagem em partida foi vista com o D2GL oficial; ver D2GL.md) | — |
 | Instalação **oficial** da loja (1.14d completa) | ⬜ **não testado**: a suíte rodou na instalação reconstruída (MPQs 1.14b + `Game.exe` 1.14d) | — |
 
 ## Como construir e testar
@@ -91,7 +91,7 @@ do jogo): **não captura a tela**.
   e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
   pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
 - Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
-  dá **124/124** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
+  dá **126/126** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
   `AEONIAN_HIDDEN=1`, em 2026-10-31 (sem as fases E e E2, que precisam do `D2.LNG`,
   ela não entra em partida). A suíte ocupa alguns GB na pasta de trabalho: em `/tmp` (tmpfs) ela já
   encheu o disco e terminou com `exit=77`. A instalação
@@ -105,6 +105,10 @@ do jogo): **não captura a tela**.
   postados na janela; a opção *Automap Size* **persiste** no prefixo entre execuções
   (por isso o comando `ensuremode`). Fora da cidade do Ato I o mapa muda a cada
   partida; andar até a Charneca é heurístico (roteiro `charneca.txt`, manual).
+- **Validação do `map-overlay` com o Teletransporte:** depois de uma varredura longa, voltar ao
+  waypoint costuma falhar. Use um roteiro curto por alvo. Clique esquerdo sobre monstro ataca em vez de
+  andar: para testar uma passagem a pé, limpe o caminho antes com Hidra. Os comandos novos do condutor
+  (`align`, `rulecheck`, `nearpass`, `crossoff`, `walkabs`) estão no cabeçalho de `mapdrive.cpp`.
 - **Outros atos no espelho:** `mapdrive-plugin/test_save.py` leva o personagem de
   teste a um ato e dificuldade, com todos os waypoints, Teletransporte, Hidra e
   mercenário (só dentro de `--test-root`, nunca nos saves de verdade). O condutor viaja
@@ -174,7 +178,7 @@ do jogo): **não captura a tela**.
    `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`. Projeto-irmão do Switch:
    `DIABLO 2 LOD SWITCH PORT` e `medianxl-switch`, na mesma pasta.
 5. **Recompile e rode a suíte** (seção "Como construir e testar"). Referência:
-   124 PASS / 0 FAIL com o `map-overlay` e as fases E e E2 (2026-10-31), Wine 11
+   126 PASS / 0 FAIL com o `map-overlay` e as fases E e E2 (2026-10-31), Wine 11
    em Linux.
 6. `build/` e `dist/` não são versionados. Regenere-os: CMake e
    `python3 tools/package.py`.
@@ -208,9 +212,8 @@ do jogo): **não captura a tela**.
    imagem sob o D2GL no hardware dele e medir o desempenho.
 2. **M2.2 — estado do jogo**: unidades e nível/mapa têm spec e símbolos; falta o
    personagem (atributos, habilidades, criação) para o C3. Nova análise pedida pelo
-   `map-overlay` (lista em [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): classe
-   359 na cidade do Ato III, objetos de quest, destino dos portais 298 e 342, posição
-   exata das passagens externas, modo de jogo, encaixe do D2GL.
+   `map-overlay` (lista em [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): estado das
+   missões no cliente, classe 534, passagem exata fora do Ato I, modo de jogo, encaixe do D2GL.
 3. **Requisitos do client**: C1/C2 feitos nos Atos I–V (`map-overlay`); planejador de
    builds (C3); compatibilidade com Project Diablo 2 / Median XL (C4, base 1.13c) —
    ver o [`ROADMAP.md`](ROADMAP.md).

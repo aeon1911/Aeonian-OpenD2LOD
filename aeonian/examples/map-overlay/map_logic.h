@@ -19,7 +19,8 @@
 // Le o estado do cliente do Game.exe 1.14d por uma MemoryView e produz marcas
 // em coordenadas de cliente (pixels isometricos do mundo); projeta-as no
 // automap pela formula da spec. So LE memoria: nao chama nenhuma funcao do
-// jogo. Nao depende de Win32, entao roda (e e testada) no host.
+// jogo, nem as que descreve (alinhamento, por exemplo, e lido pelos stats). Nao
+// depende de Win32, entao roda (e e testada) no host.
 //
 // Fontes de cada fato (offsets, flags, formula):
 //   docs/specs/game-exe-1.14d-units.md            (unidades, monstros)
@@ -70,6 +71,9 @@ struct GameAddresses {
   uint32_t ally_list = 0;        // cabeca da lista de aliados
   uint32_t objects_base = 0;     // ponteiro para os registros de objects
   uint32_t objects_count = 0;    // quantidade de registros de objects
+  // Entrada de D2Common.GetUnitAlignment. O mod nao a chama: os bytes conferidos
+  // atestam o layout dos stats que ele le (U sec. 7.2).
+  uint32_t unit_alignment = 0;
 };
 
 // Um global dentro dos bytes de uma ancora: o DWORD little-endian em `offset`
@@ -85,7 +89,7 @@ struct AnchorSpec {
 // Todas as ancoras que o mod usa (e a lista de simbolos que ele resolve).
 const std::vector<AnchorSpec>& Anchors();
 
-// Simbolos que o mod resolve, sem repeticao, na ordem de Anchors().
+// Simbolos que o mod resolve, sem repeticao: os de Anchors() e os demais.
 std::vector<std::string> RequiredSymbols();
 
 using ResolveFn = uint32_t (*)(void* context, const char* symbol);
@@ -116,6 +120,7 @@ enum Feature : uint32_t {
   kFeatureObjectTable = 1u << 6,  // colunas de objects (waypoints, portais)
   kFeaturePanels = 1u << 7,       // paineis abertos
   kFeatureFrameSize = 1u << 8,    // tamanho do quadro do jogo
+  kFeatureAlignment = 1u << 9,    // alinhamento (filtro de hostis)
 };
 uint32_t AvailableFeatures(const GameAddresses& addr);
 
@@ -165,6 +170,8 @@ inline bool AutomapDrawable(const AutomapView& view) {
 
 // Subtiles -> coordenada de cliente: cx = (x - y)*16, cy = (x + y)*8.
 Point SubtileToClient(int32_t x, int32_t y);
+// O inverso, para pontos que vieram de SubtileToClient (logs e testes).
+Point ClientToSubtile(int32_t cx, int32_t cy);
 inline Point TileToClient(int32_t x, int32_t y) {
   return SubtileToClient(x * 5, y * 5);  // 1 tile = 5 subtiles
 }
@@ -185,8 +192,10 @@ enum class MarkKind : uint8_t {
   kUnique,
   kSuperUnique,
   kAlly,         // mercenario ou invocacao (lista de aliados)
+  kFriendly,     // nao hostil, fora da lista de aliados (classes 359 e 522)
   kNpc,          // NPC (monstats bit 0x100)
   kObject,       // objeto da configuracao ([objects])
+  kQuest,        // objetivo de quest (OperateFn no conjunto da spec)
   kWaypoint,     // waypoint (SubClass 0x40)
   kWaypointRoom, // sala com waypoint ainda nao carregada (aproximado)
   kPortalBlue,   // portal da cidade (classe 59)
@@ -194,8 +203,15 @@ enum class MarkKind : uint8_t {
   kPortalOther,  // demais portais por objeto (SubClass 0x10)
   kExit,         // saida por warp com posicao exata (tile/predefinida tipo 5)
   kExitRoom,     // sala que contem um warp ainda nao carregado (aproximado)
-  kPassage,      // borda aberta com uma sala de outro nivel
+  kPassage,      // passagem exata entre niveis abertos (ver PassageSource)
   kPassageApprox,  // trecho comum dos retangulos de dois niveis (aproximado)
+};
+
+// De onde veio uma marca kPassage (L sec. 4.1).
+enum class PassageSource : uint8_t {
+  kNone,
+  kCollision,  // celulas livres dos dois lados, com as salas carregadas
+  kAct1Rule,   // variante da sala, sem ativar nada (so nas bordas medidas do Ato I)
 };
 
 struct Mark {
@@ -203,27 +219,58 @@ struct Mark {
   uint8_t points = 1;     // 1 ponto, 2 (segmento) ou 4 (contorno da sala)
   bool primary = false;   // kPassage: o segmento que leva o rotulo do destino
   bool own = false;       // kAlly: o dono e o jogador local
+  bool used = false;      // kQuest: a unidade esta em modo != 0 (U sec. 5.4)
+  PassageSource source = PassageSource::kNone;  // kPassage
   int32_t x[4] = {};      // coordenadas de cliente
   int32_t y[4] = {};
   int32_t dest_level = -1;  // saidas: id do nivel de destino (-1 = ?)
   int32_t warp_class = -1;  // saidas por warp: id de lvlwarp
-  int32_t label = -1;       // kObject: indice em ScanOptions::objects
+  int32_t label = -1;       // kObject, kQuest: indice em ScanOptions::objects_to_mark
   int32_t unit_class = -1;  // monstros e objetos: linha de monstats/objects
+  int32_t operate_fn = -1;  // kQuest: coluna OperateFn do registro
+  int32_t ally_type = -1;   // kAlly: tipo na lista de aliados (U sec. 7.1)
 };
 
 struct ObjectLabel {
   uint32_t object_class = 0;  // linha de objects.txt
-  std::string label;          // UTF-8
+  std::string label;          // UTF-8; kHideObjectLabel esconde a classe
+};
+
+// Rotulo de [objects] que tira a classe dos objetivos e da configuracao.
+inline constexpr const char* kHideObjectLabel = "-";
+
+// O que continua valendo depois que as salas descarregam: as passagens exatas ja
+// calculadas pela colisao e os objetivos vistos em uso. Vale para um ato de um mapa;
+// ScanGame a zera quando eles mudam.
+struct ScanMemo {
+  struct Passage {
+    int32_t level = 0;
+    int32_t dest = 0;
+    int32_t width = 0;  // subtiles livres somados
+    std::vector<Mark> marks;
+  };
+  struct UsedQuest {
+    int32_t level = 0;
+    int32_t object_class = 0;
+  };
+  uint32_t act = 0;
+  uint32_t seed = 0;
+  std::vector<Passage> passages;
+  std::vector<UsedQuest> used_quests;
 };
 
 struct ScanOptions {
   bool monsters = true;
   bool allies = true;
-  bool npcs = true;
+  bool npcs = true;     // NPCs e os amigos fora da lista de aliados
   bool objects = true;  // waypoints, portais e os da configuracao
+  bool quests = true;   // objetivos de quest
   bool exits = true;
   bool only_current_level = true;
+  // false so para conferir a regra do Ato I contra a colisao (condutor de teste).
+  bool passage_collision = true;
   std::vector<ObjectLabel> objects_to_mark;
+  ScanMemo* memo = nullptr;  // opcional; so a thread principal usa
 };
 
 struct ScanStats {
@@ -238,8 +285,12 @@ struct ScanStats {
   uint32_t superuniques = 0;
   uint32_t allies = 0;
   uint32_t own_allies = 0;
+  uint32_t friendly = 0;
+  uint32_t alignment_unknown = 0;  // monstros cujos stats nao puderam ser lidos
   uint32_t npcs = 0;
   uint32_t objects = 0;  // os da configuracao
+  uint32_t quests = 0;
+  uint32_t quests_used = 0;
   uint32_t waypoints = 0;
   uint32_t waypoint_rooms = 0;
   uint32_t portals_blue = 0;
@@ -247,7 +298,8 @@ struct ScanStats {
   uint32_t portals_other = 0;
   uint32_t exits = 0;
   uint32_t exit_rooms = 0;
-  uint32_t passages = 0;
+  uint32_t passages = 0;       // trechos exatos, das duas fontes
+  uint32_t passages_rule = 0;  // deles, os da regra do Ato I
   uint32_t passages_approx = 0;
   uint32_t passage_levels = 0;
 };
@@ -301,9 +353,23 @@ bool ReadLevelLinks(const MemoryView& mem, const GameAddresses& addr,
                     int32_t warp[8]);
 
 // Sala de warp que pode ser ativada para revelar a posicao exata da saida
-// (L sec. 3.1): sala fora de `done`, nao carregada, sem carga do servidor e cujo
-// warp ainda nao tem posicao exata. nullptr se nao houver.
+// (L sec. 3.1): sala fora de `done`, nao carregada, sem carga do servidor, cujo
+// warp ainda nao tem posicao exata e leva a um nivel do mesmo ato (a ligacao do
+// warp gera o destino, e pedir nivel de outro ato fecha o jogo). nullptr se nao
+// houver.
 const WarpRoom* NextRoomToReveal(const Scan& scan, const std::vector<uint32_t>& done);
+
+// Por que nao chamar AddRoomData agora (L sec. 3.1), ou nullptr se pode. Confere
+// que o ato do cliente e o do jogador, que o nivel atual esta na corrente desse
+// ato e que ele tem salas ativas, para o nivel nao perder as Room2.
+const char* RevealBlockReason(const MemoryView& mem, const Scan& scan);
+
+// Ato (0 = Ato I) de um nivel, pelas cidades (L sec. 2.8); -1 fora da faixa.
+int32_t ActOfLevel(int32_t level_id);
+
+// Nome interno do objeto, da tabela do jogo em memoria (U sec. 5.1), so para o log.
+bool ReadObjectName(const MemoryView& mem, const GameAddresses& addr, uint32_t object_class,
+                    char* out, uint32_t out_size);
 
 // --- Classificacao ---------------------------------------------------------
 
@@ -315,13 +381,27 @@ enum class MonsterClass : uint8_t {
   kUnique,
   kSuperUnique,
   kAlly,
+  kFriendly,
   kNpc,
 };
 
+// Resultado do teste de alinhamento (U sec. 4 e 7.2).
+enum class Alignment : uint8_t {
+  kUnknown,   // simbolo ausente ou stats ilegiveis
+  kOther,     // 0 ou 1. TODO(RE): 1 nunca foi visto vivo; o filtro o trata como hostil
+  kFriendly,  // 2
+};
+
+// Le o alinhamento direto dos stats da unidade tipo 0 ou 1 (U sec. 7.2), que da o
+// mesmo que D2Common.GetUnitAlignment sem chamar o jogo: o stat 172 da sub-lista
+// do estado 105, 0 sem esse estado ou sem stats. false se a memoria nao for legivel.
+bool ReadUnitAlignment(const MemoryView& mem, uint32_t unit, int32_t* out);
+
 // mode: Unit+0x10; monstats_flags: registro de monstats +0x0C; type_flags:
-// MonsterData+0x16; is_ally: o id da unidade esta na lista de aliados.
-MonsterClass ClassifyMonster(uint32_t mode, uint32_t monstats_flags,
-                             uint8_t type_flags, bool is_ally);
+// MonsterData+0x16; is_ally: o id da unidade esta na lista de aliados. Sem o
+// alinhamento, recusa o bit 0x400 de monstats, que deu o mesmo nas classes vistas.
+MonsterClass ClassifyMonster(uint32_t mode, uint32_t monstats_flags, uint8_t type_flags,
+                             bool is_ally, Alignment alignment);
 
 enum class ObjectKind : uint8_t {
   kOther,
@@ -329,10 +409,20 @@ enum class ObjectKind : uint8_t {
   kPortalBlue,
   kPortalRed,
   kPortalOther,
+  kQuest,
 };
 
-// object_class: linha de objects; sub_class: coluna SubClass do registro.
-ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class);
+// OperateFn no conjunto de objetivos de quest (U sec. 5.4).
+bool IsQuestOperateFn(uint8_t operate_fn);
+
+// Colunas do registro de objects. waypoint e portal vem de SubClass; objetivo vem
+// de OperateFn, mais as classes que a spec aponta fora do conjunto: 460 (predefinida
+// que marca a 558) e 473 (gaiolas).
+ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class, uint8_t operate_fn);
+
+// Destino fixo pelo nivel atual das classes 298 e 342 (U sec. 5.3), -1 nas demais.
+// Na 342 ele so vale com a missao concluida, o que o mod nao tem como saber.
+int32_t FixedPortalDestination(uint32_t object_class, int32_t level_id);
 
 // Niveis de cidade (L sec. 2.8).
 bool IsTownLevel(int32_t level_id);
@@ -342,11 +432,37 @@ bool IsTownLevel(int32_t level_id);
 // Lado comum (com comprimento > 0) de dois retangulos encostados, em tiles.
 bool SharedEdge(const TileRect& a, const TileRect& b, Point* from, Point* to);
 
+// Sala cujo lado toca o trecho [from, to] de uma fronteira, em tiles.
+bool RoomTouchesEdge(const TileRect& room, const Point& from, const Point& to);
+
+// Situacao de um par de celulas vizinhas atraves da fronteira.
+enum class EdgeCell : uint8_t {
+  kUnknown,  // alguma das salas nao esta carregada
+  kBlocked,  // algum dos lados tem o bit de bloqueio de caminhada
+  kFree,
+};
+
+struct EdgeRun {
+  int32_t start = 0;  // indice da primeira celula livre
+  int32_t length = 0;
+};
+
+// Trechos contiguos de celulas livres.
+std::vector<EdgeRun> FreeRuns(const std::vector<EdgeCell>& cells);
+
+// Bordas em que a regra do Ato I foi medida contra a colisao (L sec. 4.1).
+bool IsAct1RuleBorder(int32_t level_a, int32_t level_b);
+
+// Celulas livres da regra do Ato I, ao longo da fronteira: [origem + 7, origem + 35)
+// em subtiles, com a origem da sala de variante >= 3.
+EdgeRun Act1RuleRun(int32_t room_origin_subtile);
+
 // Marca projetada em pixels do quadro do jogo.
 struct ScreenMark {
   MarkKind kind = MarkKind::kMonster;
   uint8_t points = 1;
   bool primary = false;
+  bool used = false;
   int32_t x[4] = {};
   int32_t y[4] = {};
   int32_t dest_level = -1;

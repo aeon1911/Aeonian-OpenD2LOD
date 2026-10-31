@@ -95,9 +95,11 @@ O Aeonian é código **x86 de 32 bits (PE/Windows)** porque roda dentro do
 O desempenho em monitores modernos (alta taxa de atualização, 1440p/4K,
 ultrawide) vem do **[D2GL](modding/D2GL.md)** (OpenGL, GPL-3.0), que o Aeonian
 **integra** (instalação, `-3dfx`, `skip_intro`, overlay de mods sobre o D2GL) em
-vez de reescrever um renderizador. O que **não** está provado ainda: a imagem
-completa sob o D2GL no nosso ambiente de teste e medições de FPS; ver
-[`modding/D2GL.md`](modding/D2GL.md).
+vez de reescrever um renderizador. A imagem completa sob o D2GL foi vista com o
+**release oficial v1.3.3** (Wine 11.20, AMD RX 9070 XT), no menu e dentro da partida,
+em janela e em Normal, com os quadros gravados pelo motor. O que **não** está provado:
+outros monitores e GPUs, tela cheia e, principalmente, **desempenho** (nenhuma medição de
+FPS). Isso depende do teste do usuário; ver [`modding/D2GL.md`](modding/D2GL.md).
 
 ## 6. Critérios de sucesso (por marco)
 

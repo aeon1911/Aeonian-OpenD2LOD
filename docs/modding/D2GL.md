@@ -132,7 +132,11 @@ Aeonian (quadro gravado pelo motor com o overlay dos plugins, 50 FPS); suíte de
 integração 66/66. A falha anterior (só texto) vinha do build não oficial (seção
 acima).
 
-**Não validado:** (1) dentro de uma partida (só o menu foi visto); (2) o modo
+**Dentro da partida, em 2026-10-31:** mesmo build oficial e mesmo ambiente, em janela de 800×600 e
+1280×720, em Normal, com o mod `map-overlay` (Atos I, III e V, quadros gravados pelo motor): cena
+completa e marcas alinhadas.
+
+**Não validado:** (1) Pesadelo, Inferno, tela cheia e outros monitores e GPUs; (2) o modo
 `ddraw`; (3) **medição de desempenho** em 144/240 Hz e 4K (o Aeonian só tem o
 custo do overlay: ≤`overlay_hz` redesenhos/s do canvas + 1 quadrilátero por
 quadro); (4) Windows nativo; (5) o build oficial sob Proton (o Proton-CachyOS só

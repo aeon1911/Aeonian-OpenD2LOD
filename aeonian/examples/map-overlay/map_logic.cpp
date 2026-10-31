@@ -35,6 +35,7 @@ constexpr uint32_t kUnitMode = 0x10;
 constexpr uint32_t kUnitData = 0x14;
 constexpr uint32_t kUnitActIndex = 0x18;
 constexpr uint32_t kUnitPath = 0x2C;
+constexpr uint32_t kUnitStats = 0x5C;
 constexpr uint32_t kUnitNextInBucket = 0xE4;
 constexpr uint32_t kUnitBlock = 0x30;
 
@@ -72,8 +73,10 @@ constexpr uint32_t kMonStatsFlags = 0x0C;
 // Modos do monstro: 0 morrendo, 12 cadaver (U sec. 3.2).
 constexpr uint32_t kModeDying = 0;
 constexpr uint32_t kModeDead = 12;
-// monstats+0x0C: 0x100 so nos NPCs, 0x8000 nos monstros hostis (U sec. 4).
+// monstats+0x0C: 0x100 so nos NPCs, 0x8000 nos monstros hostis; 0x400 nas 13 classes
+// vistas vivas, todas amigas, e nenhuma hostil (U sec. 4).
 constexpr uint32_t kMonStatsNpc = 0x100;
+constexpr uint32_t kMonStatsInTown = 0x400;
 constexpr uint32_t kMonStatsKillable = 0x8000;
 // MonsterData+0x16 (U sec. 4).
 constexpr uint8_t kMonsterSuperUnique = 0x02;
@@ -81,7 +84,22 @@ constexpr uint8_t kMonsterChampion = 0x04;
 constexpr uint8_t kMonsterUnique = 0x08;
 constexpr uint8_t kMonsterMinion = 0x10;
 
+// Stats da unidade e alinhamento (U sec. 7.2).
+constexpr uint32_t kStatsFirstSubList = 0x3C;
+constexpr uint32_t kSubListState = 0x14;
+constexpr uint32_t kSubListPairs = 0x24;
+constexpr uint32_t kSubListPairCount = 0x28;  // WORD
+constexpr uint32_t kSubListNext = 0x2C;
+constexpr uint32_t kSubListBlock = 0x2C + 4;
+constexpr uint32_t kStatPairSize = 8;  // (stat << 16, valor)
+constexpr uint32_t kStateAlignment = 105;
+constexpr uint32_t kStatAlignment = 172;
+constexpr int32_t kAlignmentFriendly = 2;
+constexpr uint32_t kMaxSubLists = 256;
+constexpr uint32_t kMaxStatPairs = 1024;
+
 // Lista de aliados (U sec. 7.1).
+constexpr uint32_t kAllyType = 0x04;
 constexpr uint32_t kAllyId = 0x08;
 constexpr uint32_t kAllyOwner = 0x0C;
 constexpr uint32_t kAllyNext = 0x30;
@@ -91,12 +109,22 @@ constexpr uint32_t kMaxAllies = 512;
 // Registro de objects (U sec. 5.1) e ObjectData (U sec. 5.2).
 constexpr uint32_t kObjectRecordSize = 0x1C0;
 constexpr uint32_t kObjectSubClass = 0x167;
+constexpr uint32_t kObjectOperateFn = 0x1B3;
+constexpr uint32_t kObjectNameSize = 64;  // char[64] em +0x000
 constexpr uint8_t kSubClassPlayerOrRedPortal = 0x04;
 constexpr uint8_t kSubClassLevelPortal = 0x10;
 constexpr uint8_t kSubClassWaypoint = 0x40;
 constexpr uint32_t kObjectClassBluePortal = 59;
 constexpr uint32_t kObjectClassRedPortal = 60;
 constexpr uint32_t kObjectDataDestLevel = 0x04;  // BYTE
+// Classes ligadas a missao fora do conjunto de OperateFn (U sec. 5.4): a predefinida
+// que marca o lugar da 558 e as gaiolas.
+constexpr uint32_t kObjectClassQuestPlaceholder = 460;
+constexpr uint32_t kObjectClassQuestUnit = 558;
+constexpr uint32_t kObjectClassQuestCage = 473;
+// Portais de destino fixo pelo nivel atual (U sec. 5.3).
+constexpr uint32_t kObjectClassArcanePortal = 298;
+constexpr uint32_t kObjectClassDurancePortal = 342;
 
 // Estado de UI e painel (L sec. 5.4).
 constexpr uint32_t kUiNpcDialog = 8;
@@ -106,15 +134,23 @@ constexpr int32_t kPanelRight = 1;
 constexpr int32_t kPanelLeft = 2;
 constexpr int32_t kPanelBoth = 3;
 
-// Sala ativa (L sec. 2.5).
+// Sala ativa e colisao (L sec. 2.5).
 constexpr uint32_t kRoom1Room2 = 0x10;
+constexpr uint32_t kRoom1Collision = 0x20;
+constexpr uint32_t kRoom1Act = 0x2C;
+constexpr uint32_t kCollisionX = 0x00;  // X, Y, largura, altura em subtiles
+constexpr uint32_t kCollisionCells = 0x20;
+constexpr uint32_t kCollisionBlock = 0x24;
+constexpr uint16_t kCollisionBlocksWalk = 0x0001;
+// A menor passagem medida tem 7 subtiles (L sec. 4.1). Frestas menores aparecem na
+// fronteira, como uma de 2 na cidade do Ato I, e nao contam como passagem.
+constexpr int32_t kMinPassageCells = 7;
 
 // Sala do DRLG (L sec. 2.4).
-constexpr uint32_t kRoom2Neighbors = 0x08;
 constexpr uint32_t kRoom2LoadCount = 0x0E;  // WORD
+constexpr uint32_t kRoom2TypeData = 0x20;
 constexpr uint32_t kRoom2Next = 0x24;
 constexpr uint32_t kRoom2Flags = 0x28;
-constexpr uint32_t kRoom2NeighborCount = 0x2C;
 constexpr uint32_t kRoom2Room1 = 0x30;
 constexpr uint32_t kRoom2TileX = 0x34;
 constexpr uint32_t kRoom2TileY = 0x38;
@@ -126,7 +162,16 @@ constexpr uint32_t kRoom2Block = 0x60;
 constexpr uint32_t kRoom2WarpBit = 0x10;  // bit 0x10 << n = contem o warp n
 constexpr uint32_t kRoom2WaypointMask = 0x30000;
 
+// Dados da sala em nivel externo e a celula do gerador (L sec. 4.1).
+constexpr uint32_t kTypeDataGeneratorCell = 0x08;
+constexpr uint32_t kGeneratorCellVariant = 0x04;
+constexpr int32_t kAct1PassageVariant = 3;
+constexpr int32_t kAct1RuleFirstCell = 7;
+constexpr int32_t kAct1RuleCells = 28;  // +7 a +34
+
 // Nivel (L sec. 2.3).
+constexpr uint32_t kLevelDrlgType = 0x00;
+constexpr uint32_t kLevelTypeExternal = 3;
 constexpr uint32_t kLevelFirstRoom2 = 0x10;
 constexpr uint32_t kLevelTileX = 0x1C;  // X, Y, largura, altura; validos antes da geracao
 constexpr uint32_t kLevelNext = 0x1AC;
@@ -135,11 +180,17 @@ constexpr uint32_t kLevelId = 0x1D0;
 
 // DrlgAct e a lista de excecoes de vizinhanca (L sec. 2.2).
 constexpr uint32_t kDrlgActExceptions = 0x90;
+constexpr uint32_t kDrlgActBackToAct = 0x46C;
 constexpr uint32_t kDrlgActFirstLevel = 0x47C;
 constexpr uint32_t kExceptionId = 0x00;
 constexpr uint32_t kExceptionVis = 0x04;
 constexpr uint32_t kExceptionWarp = 0x24;
 constexpr uint32_t kExceptionNext = 0x44;
+
+// Act (L sec. 2.1).
+constexpr uint32_t kActSeed = 0x0C;
+constexpr uint32_t kActIndex = 0x14;
+constexpr uint32_t kActDrlgAct = 0x48;
 
 // LevelDefs (L sec. 2.7).
 constexpr uint32_t kDataTablesLevelDefsCount = 0xC5C;
@@ -157,12 +208,12 @@ constexpr uint32_t kPresetBlock = 0x20;
 
 // Limites contra memoria corrompida (nenhum laco depende so dos ponteiros).
 constexpr uint32_t kMaxRooms = 4096;
-constexpr uint32_t kMaxNeighbors = 64;
 constexpr uint32_t kMaxPresetsPerRoom = 512;
 constexpr uint32_t kMaxUnitsPerType = 4096;
 constexpr uint32_t kMaxExceptions = 512;
 constexpr uint32_t kMaxLevels = 256;
 constexpr int32_t kMaxLevelId = 1024;
+constexpr int32_t kLevelDefsSeen = 137;  // linhas vistas em LevelDefs (L sec. 2.7)
 constexpr int32_t kMaxRoomTiles = 4096;
 
 // Duas marcas estaticas do mesmo tipo a menos disto (pixels de cliente) sao a
@@ -235,12 +286,14 @@ int32_t FindObjectLabel(const ScanOptions& options, uint32_t object_class) {
 struct AllyEntry {
   uint32_t id = 0;
   uint32_t owner = 0;
+  int32_t type = -1;
 };
 
 struct Tables {
   uint32_t objects_base = 0;
   uint32_t objects_count = 0;
   uint32_t player_id = 0;
+  bool alignment_ok = false;
   std::vector<AllyEntry> allies;
 };
 
@@ -251,29 +304,46 @@ void ReadAllies(const MemoryView& mem, const GameAddresses& addr, Tables* tables
   for (uint32_t i = 0; node != 0 && i < kMaxAllies; ++i) {
     Block<kAllyBlock> b;
     if (!b.Load(mem, node)) break;
-    tables->allies.push_back(AllyEntry{b.U32(kAllyId), b.U32(kAllyOwner)});
+    tables->allies.push_back(AllyEntry{b.U32(kAllyId), b.U32(kAllyOwner), b.I32(kAllyType)});
     node = b.U32(kAllyNext);
   }
 }
 
+// O que um objeto e, para as duas fontes (predefinida e unidade).
+struct ObjectInfo {
+  ObjectKind kind = ObjectKind::kOther;
+  int32_t label = -1;
+  int32_t operate_fn = -1;
+};
+
 // Le o que um objeto e. false se nao for para marcar. O que o jogo classifica
-// (waypoint, portal) nao precisa de configuracao; [objects] rotula o resto.
-// TODO(RE): objetos de quest nao tem coluna propria (U sec. 5.1); OperateFn e
-// AutoMap sao so pistas sem teste, entao eles dependem de [objects].
+// (waypoint, portal, objetivo) nao precisa de configuracao; [objects] rotula o
+// resto, troca o rotulo de um objetivo ou esconde a classe.
 bool IdentifyObject(const MemoryView& mem, const ScanOptions& options, const Tables& tables,
-                    uint32_t object_class, ObjectKind* kind, int32_t* label) {
-  *kind = ObjectKind::kOther;
-  *label = -1;
+                    uint32_t object_class, ObjectInfo* info) {
+  *info = ObjectInfo{};
+  // A classe de uma predefinida pode estar fora da tabela (L sec. 4.3).
   if (tables.objects_base != 0 && object_class < tables.objects_count) {
+    const uint32_t record = tables.objects_base + object_class * kObjectRecordSize;
     uint8_t sub_class = 0;
-    if (mem.Read(tables.objects_base + object_class * kObjectRecordSize + kObjectSubClass,
-                 &sub_class, 1)) {
-      *kind = ClassifyObject(object_class, sub_class);
+    uint8_t operate_fn = 0;
+    if (mem.Read(record + kObjectSubClass, &sub_class, 1) &&
+        mem.Read(record + kObjectOperateFn, &operate_fn, 1)) {
+      info->kind = ClassifyObject(object_class, sub_class, operate_fn);
+      info->operate_fn = operate_fn;
     }
   }
-  if (*kind != ObjectKind::kOther) return true;
-  *label = FindObjectLabel(options, object_class);
-  return *label >= 0;
+  if (info->kind != ObjectKind::kOther && info->kind != ObjectKind::kQuest) return options.objects;
+  info->label = FindObjectLabel(options, object_class);
+  if (info->label >= 0 &&
+      options.objects_to_mark[static_cast<size_t>(info->label)].label == kHideObjectLabel) {
+    return false;
+  }
+  if (info->kind == ObjectKind::kQuest) {
+    if (options.quests) return true;
+    info->kind = ObjectKind::kOther;
+  }
+  return options.objects && info->label >= 0;
 }
 
 MarkKind MarkOfObject(ObjectKind kind) {
@@ -286,6 +356,8 @@ MarkKind MarkOfObject(ObjectKind kind) {
       return MarkKind::kPortalRed;
     case ObjectKind::kPortalOther:
       return MarkKind::kPortalOther;
+    case ObjectKind::kQuest:
+      return MarkKind::kQuest;
     case ObjectKind::kOther:
       break;
   }
@@ -314,25 +386,61 @@ void AddExit(const Point& at, uint32_t warp_class, Scan* scan) {
   ++scan->stats.exits;
 }
 
-// A predefinida vem antes da unidade: a mesma marca ganha o destino que so a
-// unidade conhece.
-void AddObject(const Point& at, ObjectKind kind, int32_t label, uint32_t object_class,
-               int32_t dest_level, Scan* scan) {
-  const MarkKind mark_kind = MarkOfObject(kind);
+// Objetivos com classes proximas, como as 5 pedras, sao marcas separadas. A 460 e
+// a 558 sao o mesmo: a predefinida e a unidade na mesma posicao (U sec. 5.4).
+bool SameQuestObject(const Mark& m, uint32_t object_class) {
+  const uint32_t other = static_cast<uint32_t>(m.unit_class);
+  return other == object_class || (other == kObjectClassQuestPlaceholder &&
+                                   object_class == kObjectClassQuestUnit) ||
+         (other == kObjectClassQuestUnit && object_class == kObjectClassQuestPlaceholder);
+}
+
+// Objeto usado continua usado depois que a unidade sai da tabela. A 460 fica no
+// lugar da 558, entao as duas contam como a mesma classe.
+bool RememberUsedQuest(int32_t level, uint32_t object_class, bool used, ScanMemo* memo) {
+  const int32_t key = static_cast<int32_t>(
+      object_class == kObjectClassQuestPlaceholder ? kObjectClassQuestUnit : object_class);
+  for (const ScanMemo::UsedQuest& q : memo->used_quests) {
+    if (q.level == level && q.object_class == key) return true;
+  }
+  if (used) memo->used_quests.push_back(ScanMemo::UsedQuest{level, key});
+  return used;
+}
+
+// A predefinida vem antes da unidade: a mesma marca ganha o que so a unidade
+// conhece, o destino do portal e se o objeto ja foi usado.
+void AddObject(const Point& at, const ObjectInfo& info, uint32_t object_class, int32_t dest_level,
+               bool from_unit, bool used, ScanMemo* memo, Scan* scan) {
+  const MarkKind mark_kind = MarkOfObject(info.kind);
+  if (mark_kind == MarkKind::kQuest && memo != nullptr) {
+    used = RememberUsedQuest(scan->level_id, object_class, used, memo);
+  }
   for (Mark& m : scan->marks) {
-    if (m.kind == mark_kind && m.label == label && SameSpot(m, at)) {
-      if (dest_level > 0) m.dest_level = dest_level;
-      return;
+    if (m.kind != mark_kind || !SameSpot(m, at)) continue;
+    if (mark_kind == MarkKind::kQuest) {
+      if (!SameQuestObject(m, object_class)) continue;
+    } else if (m.label != info.label) {
+      continue;
     }
+    if (dest_level > 0) m.dest_level = dest_level;
+    if (mark_kind != MarkKind::kQuest) return;
+    if (from_unit) {
+      m.unit_class = static_cast<int32_t>(object_class);
+      m.operate_fn = info.operate_fn;
+    }
+    if (used && !m.used) {
+      m.used = true;
+      ++scan->stats.quests_used;
+    }
+    return;
   }
   Mark mark;
   mark.kind = mark_kind;
   mark.x[0] = at.x;
   mark.y[0] = at.y;
-  mark.label = label;
+  mark.label = info.label;
   mark.unit_class = static_cast<int32_t>(object_class);
   mark.dest_level = dest_level;
-  scan->marks.push_back(mark);
   switch (mark_kind) {
     case MarkKind::kWaypoint:
       ++scan->stats.waypoints;
@@ -346,59 +454,17 @@ void AddObject(const Point& at, ObjectKind kind, int32_t label, uint32_t object_
     case MarkKind::kPortalOther:
       ++scan->stats.portals_other;
       break;
+    case MarkKind::kQuest:
+      mark.operate_fn = info.operate_fn;
+      mark.used = used;
+      ++scan->stats.quests;
+      if (used) ++scan->stats.quests_used;
+      break;
     default:
       ++scan->stats.objects;
       break;
   }
-}
-
-// Com Warp[n] != -1 a vizinha e a sala de destino de um warp ja ligado, nao
-// uma borda (L sec. 4.1). Sem Vis/Warp nao ha como distinguir: SharedEdge ainda
-// exige que as salas se toquem.
-bool IsOpenBorderWith(const Scan& scan, int32_t dest) {
-  if (!scan.links_ok) return true;
-  for (int n = 0; n < 8; ++n) {
-    if (scan.vis[n] == dest && scan.warp[n] == -1) return true;
-  }
-  return false;
-}
-
-// Bordas com salas de outros niveis (L sec. 4.1): a lista de vizinhas so existe
-// depois que a sala foi ativada.
-void ScanPassages(const MemoryView& mem, uint32_t room, const Block<kRoom2Block>& r,
-                  uint32_t level, Scan* scan) {
-  const uint32_t list = r.U32(kRoom2Neighbors);
-  const uint32_t count = r.U32(kRoom2NeighborCount);
-  if (list == 0 || count > kMaxNeighbors) return;
-  const TileRect rect = RoomRect(r);
-  if (!ValidRect(rect)) return;
-  for (uint32_t k = 0; k < count; ++k) {
-    uint32_t neighbor = 0;
-    if (!ReadU32(mem, list + 4 * k, &neighbor) || neighbor == 0 || neighbor == room) continue;
-    Block<kRoom2Block> nb;
-    if (!nb.Load(mem, neighbor)) continue;
-    const uint32_t other = nb.U32(kRoom2Level);
-    if (other == 0 || other == level) continue;
-    int32_t dest = 0;
-    if (!ReadI32(mem, other + kLevelId, &dest) || dest <= 0 || dest >= kMaxLevelId) continue;
-    if (!IsOpenBorderWith(*scan, dest)) continue;
-    const TileRect nrect = RoomRect(nb);
-    Point from;
-    Point to;
-    if (!ValidRect(nrect) || !SharedEdge(rect, nrect, &from, &to)) continue;
-    Mark mark;
-    mark.kind = MarkKind::kPassage;
-    mark.points = 2;
-    const Point a = TileToClient(from.x, from.y);
-    const Point b = TileToClient(to.x, to.y);
-    mark.x[0] = a.x;
-    mark.y[0] = a.y;
-    mark.x[1] = b.x;
-    mark.y[1] = b.y;
-    mark.dest_level = dest;
-    scan->marks.push_back(mark);
-    ++scan->stats.passages;
-  }
+  scan->marks.push_back(mark);
 }
 
 // Unidades predefinidas (L sec. 2.6): saidas (tipo 5) e objetos (tipo 2). Sao
@@ -416,19 +482,26 @@ void ScanPresets(const MemoryView& mem, const Block<kRoom2Block>& r,
     const Point at = SubtileToClient(rect.x * 5 + p.I32(kPresetX), rect.y * 5 + p.I32(kPresetY));
     if (type == kTypeTile && options.exits) {
       AddExit(at, object_class, scan);
-    } else if (type == kTypeObject && options.objects) {
-      ObjectKind kind = ObjectKind::kOther;
-      int32_t label = -1;
-      if (IdentifyObject(mem, options, tables, object_class, &kind, &label)) {
-        AddObject(at, kind, label, object_class, -1, scan);
+    } else if (type == kTypeObject && (options.objects || options.quests)) {
+      ObjectInfo info;
+      if (IdentifyObject(mem, options, tables, object_class, &info)) {
+        AddObject(at, info, object_class, FixedPortalDestination(object_class, scan->level_id),
+                  false, false, options.memo, scan);
       }
     }
     preset = p.U32(kPresetNext);
   }
 }
 
+// Sala do nivel atual, para o calculo das bordas.
+struct RoomRef {
+  uint32_t room2 = 0;
+  uint32_t room1 = 0;
+  TileRect rect;
+};
+
 void ScanRooms(const MemoryView& mem, const ScanOptions& options, const Tables& tables,
-               Scan* scan, std::vector<TileRect>* waypoint_rooms) {
+               Scan* scan, std::vector<TileRect>* waypoint_rooms, std::vector<RoomRef>* rooms) {
   uint32_t room = 0;
   if (!ReadU32(mem, scan->level + kLevelFirstRoom2, &room)) return;
   for (uint32_t i = 0; room != 0 && i < kMaxRooms; ++i) {
@@ -440,7 +513,7 @@ void ScanRooms(const MemoryView& mem, const ScanOptions& options, const Tables& 
     const uint32_t flags = r.U32(kRoom2Flags);
     const TileRect rect = RoomRect(r);
     if (options.exits) {
-      ScanPassages(mem, room, r, scan->level, scan);
+      if (ValidRect(rect)) rooms->push_back(RoomRef{room, r.U32(kRoom2Room1), rect});
       // Warps (L sec. 4.2): so os n com Vis[n] != 0 e Warp[n] != -1; os
       // demais bits marcam vinculo com nivel aberto e aparecem em muitas salas.
       for (int n = 0; scan->links_ok && n < 8; ++n) {
@@ -467,7 +540,7 @@ void ScanRooms(const MemoryView& mem, const ScanOptions& options, const Tables& 
   }
 }
 
-void ScanMonster(const MemoryView& mem, const Block<kUnitBlock>& u,
+void ScanMonster(const MemoryView& mem, uint32_t unit, const Block<kUnitBlock>& u,
                  const ScanOptions& options, const Tables& tables, uint32_t monstats_base,
                  uint32_t monstats_count, Scan* scan) {
   const uint32_t monster_class = u.U32(kUnitClass);
@@ -485,12 +558,24 @@ void ScanMonster(const MemoryView& mem, const Block<kUnitBlock>& u,
   for (const AllyEntry& a : tables.allies) {
     if (a.id == unit_id) ally = &a;
   }
+  // A lista de aliados diz o dono; hostil ou nao vem do alinhamento (U sec. 4).
+  Alignment alignment = Alignment::kUnknown;
+  bool unreadable = false;
+  if (tables.alignment_ok && ally == nullptr) {
+    int32_t value = 0;
+    if (ReadUnitAlignment(mem, unit, &value)) {
+      alignment = value == kAlignmentFriendly ? Alignment::kFriendly : Alignment::kOther;
+    } else {
+      unreadable = true;
+    }
+  }
   const MonsterClass kind =
-      ClassifyMonster(u.U32(kUnitMode), monstats_flags, type_flags, ally != nullptr);
+      ClassifyMonster(u.U32(kUnitMode), monstats_flags, type_flags, ally != nullptr, alignment);
   if (kind == MonsterClass::kHidden) return;
-  if (kind == MonsterClass::kNpc && !options.npcs) return;
+  const bool npc_like = kind == MonsterClass::kNpc || kind == MonsterClass::kFriendly;
+  if (npc_like && !options.npcs) return;
   if (kind == MonsterClass::kAlly && !options.allies) return;
-  if (kind != MonsterClass::kNpc && kind != MonsterClass::kAlly && !options.monsters) return;
+  if (!npc_like && kind != MonsterClass::kAlly && !options.monsters) return;
   Block<kDynBlock> path;
   if (!path.Load(mem, u.U32(kUnitPath))) return;
   if (options.only_current_level && LevelOfRoom1(mem, path.U32(kDynRoom1)) != scan->level) {
@@ -500,14 +585,20 @@ void ScanMonster(const MemoryView& mem, const Block<kUnitBlock>& u,
   mark.x[0] = path.I32(kDynClientX);
   mark.y[0] = path.I32(kDynClientY);
   mark.unit_class = static_cast<int32_t>(monster_class);
+  if (unreadable) ++scan->stats.alignment_unknown;
   switch (kind) {
     case MonsterClass::kNpc:
       mark.kind = MarkKind::kNpc;
       ++scan->stats.npcs;
       break;
+    case MonsterClass::kFriendly:
+      mark.kind = MarkKind::kFriendly;
+      ++scan->stats.friendly;
+      break;
     case MonsterClass::kAlly:
       mark.kind = MarkKind::kAlly;
       mark.own = ally != nullptr && ally->owner == tables.player_id;
+      mark.ally_type = ally != nullptr ? ally->type : -1;
       ++scan->stats.allies;
       if (mark.own) ++scan->stats.own_allies;
       break;
@@ -531,7 +622,7 @@ void ScanMonster(const MemoryView& mem, const Block<kUnitBlock>& u,
       mark.kind = MarkKind::kMonster;
       break;
   }
-  if (kind != MonsterClass::kNpc && kind != MonsterClass::kAlly) ++scan->stats.monsters;
+  if (!npc_like && kind != MonsterClass::kAlly) ++scan->stats.monsters;
   scan->marks.push_back(mark);
 }
 
@@ -539,12 +630,8 @@ void ScanMonster(const MemoryView& mem, const Block<kUnitBlock>& u,
 void ScanStaticUnit(const MemoryView& mem, const Block<kUnitBlock>& u, uint32_t type,
                     const ScanOptions& options, const Tables& tables, Scan* scan) {
   const uint32_t unit_class = u.U32(kUnitClass);
-  ObjectKind kind = ObjectKind::kOther;
-  int32_t label = -1;
-  if (type == kTypeObject &&
-      !IdentifyObject(mem, options, tables, unit_class, &kind, &label)) {
-    return;
-  }
+  ObjectInfo info;
+  if (type == kTypeObject && !IdentifyObject(mem, options, tables, unit_class, &info)) return;
   Block<kStaticBlock> path;
   if (!path.Load(mem, u.U32(kUnitPath))) return;
   // A tabela tambem traz o tile do outro lado do warp (L sec. 4.2): tiles de
@@ -560,14 +647,16 @@ void ScanStaticUnit(const MemoryView& mem, const Block<kUnitBlock>& u, uint32_t 
     AddExit(at, unit_class, scan);
     return;
   }
-  // Destino so nas classes 59 e 60 (U sec. 5.3).
-  // TODO(RE): destino das classes 298 e 342 (o campo vale 0 na 298).
-  int32_t dest = -1;
-  if (kind == ObjectKind::kPortalBlue || kind == ObjectKind::kPortalRed) {
+  // Destino em ObjectData nas classes 59 e 60; pelo nivel atual nas 298 e 342, em
+  // que o campo vale 0 (U sec. 5.3).
+  // TODO(RE): classes 100 e 377, sem predefinida no censo e nunca vistas vivas.
+  int32_t dest = FixedPortalDestination(unit_class, scan->level_id);
+  if (info.kind == ObjectKind::kPortalBlue || info.kind == ObjectKind::kPortalRed) {
     uint8_t value = 0;
     if (mem.Read(u.U32(kUnitData) + kObjectDataDestLevel, &value, 1) && value != 0) dest = value;
   }
-  AddObject(at, kind, label, unit_class, dest, scan);
+  // Modo != 0 diz que o objeto foi usado; modo 0 nao prova nada (U sec. 5.4).
+  AddObject(at, info, unit_class, dest, true, u.U32(kUnitMode) != 0, options.memo, scan);
 }
 
 // Tabela de unidades do servidor (U sec. 2): so o que o cliente ja carregou.
@@ -587,7 +676,7 @@ void ScanUnits(const MemoryView& mem, const GameAddresses& addr, const ScanOptio
         (monstats_base == 0 || !(options.monsters || options.npcs || options.allies))) {
       continue;
     }
-    if (type == kTypeObject && !options.objects) continue;
+    if (type == kTypeObject && !options.objects && !options.quests) continue;
     if (type == kTypeTile && !options.exits) continue;
     uint32_t seen = 0;
     for (uint32_t b = 0; b < kUnitTableBuckets && seen < kMaxUnitsPerType; ++b) {
@@ -601,7 +690,7 @@ void ScanUnits(const MemoryView& mem, const GameAddresses& addr, const ScanOptio
         ++scan->stats.units;
         if (u.U32(kUnitType) == type) {
           if (type == kTypeMonster) {
-            ScanMonster(mem, u, options, tables, monstats_base, monstats_count, scan);
+            ScanMonster(mem, unit, u, options, tables, monstats_base, monstats_count, scan);
           } else {
             ScanStaticUnit(mem, u, type, options, tables, scan);
           }
@@ -666,10 +755,196 @@ bool ReadLevelRect(const MemoryView& mem, uint32_t level, TileRect* rect) {
   return ValidRect(*rect);
 }
 
-// Vizinhos abertos sem nenhuma sala ligada ainda: o trecho comum dos retangulos
-// dos niveis diz onde a passagem esta, nao a passagem (L sec. 4.1).
-// TODO(RE): a posicao exata fica em alguma estrutura do gerador do mapa externo.
-void AddApproxPassages(const MemoryView& mem, Scan* scan) {
+uint32_t FindLevelInAct(const MemoryView& mem, uint32_t drlg_act, int32_t id) {
+  uint32_t level = 0;
+  if (!ReadU32(mem, drlg_act + kDrlgActFirstLevel, &level)) return 0;
+  for (uint32_t i = 0; level != 0 && i < kMaxLevels; ++i) {
+    int32_t level_id = 0;
+    if (!ReadI32(mem, level + kLevelId, &level_id)) return 0;
+    if (level_id == id) return level;
+    if (!ReadU32(mem, level + kLevelNext, &level)) return 0;
+  }
+  return 0;
+}
+
+struct CollisionGrid {
+  int32_t x = 0;  // subtiles
+  int32_t y = 0;
+  int32_t w = 0;
+  int32_t h = 0;
+  uint32_t cells = 0;  // WORD[w * h], linha por linha
+};
+
+bool ReadCollisionGrid(const MemoryView& mem, uint32_t room1, CollisionGrid* grid) {
+  uint32_t address = 0;
+  Block<kCollisionBlock> b;
+  if (!ReadU32(mem, room1 + kRoom1Collision, &address) || !b.Load(mem, address)) return false;
+  grid->x = b.I32(kCollisionX);
+  grid->y = b.I32(kCollisionX + 4);
+  grid->w = b.I32(kCollisionX + 8);
+  grid->h = b.I32(kCollisionX + 12);
+  grid->cells = b.U32(kCollisionCells);
+  return grid->cells != 0 && grid->w > 0 && grid->h > 0 && grid->w <= kMaxRoomTiles &&
+         grid->h <= kMaxRoomTiles;
+}
+
+// false se a celula nao estiver em nenhuma sala carregada.
+bool ReadCellBlocked(const MemoryView& mem, const std::vector<CollisionGrid>& grids, int32_t x,
+                     int32_t y, bool* blocked) {
+  for (const CollisionGrid& g : grids) {
+    if (x < g.x || y < g.y || x >= g.x + g.w || y >= g.y + g.h) continue;
+    const uint32_t index = static_cast<uint32_t>((y - g.y) * g.w + (x - g.x));
+    uint16_t cell = 0;
+    if (!mem.Read(g.cells + index * 2, &cell, 2)) return false;
+    *blocked = (cell & kCollisionBlocksWalk) != 0;
+    return true;
+  }
+  return false;
+}
+
+// Segmento de uma fronteira de `from` a `to` (tiles), com os indices de `run` contados
+// em subtiles a partir de `from`.
+Mark PassageMark(const Point& from, const Point& to, const EdgeRun& run, int32_t dest) {
+  const bool vertical = from.x == to.x;
+  const int32_t line = (vertical ? from.x : from.y) * 5;
+  const int32_t begin = (vertical ? from.y : from.x) * 5 + run.start;
+  const int32_t end = begin + run.length;
+  const Point a = vertical ? SubtileToClient(line, begin) : SubtileToClient(begin, line);
+  const Point b = vertical ? SubtileToClient(line, end) : SubtileToClient(end, line);
+  Mark mark;
+  mark.kind = MarkKind::kPassage;
+  mark.points = 2;
+  mark.x[0] = a.x;
+  mark.y[0] = a.y;
+  mark.x[1] = b.x;
+  mark.y[1] = b.y;
+  mark.dest_level = dest;
+  return mark;
+}
+
+// Passagem pela colisao (L sec. 4.1): pares de celulas vizinhas atraves da fronteira,
+// livres dos dois lados, com as salas carregadas. Devolve os subtiles livres.
+int32_t CollisionPassage(const MemoryView& mem, const std::vector<RoomRef>& rooms, uint32_t other,
+                         const Point& from, const Point& to, int32_t dest,
+                         std::vector<Mark>* marks) {
+  std::vector<CollisionGrid> grids;
+  for (const RoomRef& room : rooms) {
+    CollisionGrid grid;
+    if (room.room1 != 0 && RoomTouchesEdge(room.rect, from, to) &&
+        ReadCollisionGrid(mem, room.room1, &grid)) {
+      grids.push_back(grid);
+    }
+  }
+  if (grids.empty()) return 0;
+  const size_t own_grids = grids.size();
+  uint32_t room = 0;
+  if (!ReadU32(mem, other + kLevelFirstRoom2, &room)) return 0;
+  for (uint32_t i = 0; room != 0 && i < kMaxRooms; ++i) {
+    Block<kRoom2Block> r;
+    if (!r.Load(mem, room)) break;
+    const TileRect rect = RoomRect(r);
+    CollisionGrid grid;
+    if (r.U32(kRoom2Room1) != 0 && ValidRect(rect) && RoomTouchesEdge(rect, from, to) &&
+        ReadCollisionGrid(mem, r.U32(kRoom2Room1), &grid)) {
+      grids.push_back(grid);
+    }
+    room = r.U32(kRoom2Next);
+  }
+  if (grids.size() == own_grids) return 0;  // nada carregado do outro lado
+  const bool vertical = from.x == to.x;
+  const int32_t line = (vertical ? from.x : from.y) * 5;
+  const int32_t begin = (vertical ? from.y : from.x) * 5;
+  const int32_t end = (vertical ? to.y : to.x) * 5;
+  std::vector<EdgeCell> cells;
+  cells.reserve(static_cast<size_t>(end - begin));
+  for (int32_t at = begin; at < end; ++at) {
+    bool blocked_a = false;
+    bool blocked_b = false;
+    const bool known_a = vertical ? ReadCellBlocked(mem, grids, line - 1, at, &blocked_a)
+                                  : ReadCellBlocked(mem, grids, at, line - 1, &blocked_a);
+    const bool known_b = vertical ? ReadCellBlocked(mem, grids, line, at, &blocked_b)
+                                  : ReadCellBlocked(mem, grids, at, line, &blocked_b);
+    if ((known_a && blocked_a) || (known_b && blocked_b)) {
+      cells.push_back(EdgeCell::kBlocked);
+    } else {
+      cells.push_back(known_a && known_b ? EdgeCell::kFree : EdgeCell::kUnknown);
+    }
+  }
+  int32_t width = 0;
+  for (const EdgeRun& run : FreeRuns(cells)) {
+    if (run.length < kMinPassageCells) continue;
+    Mark mark = PassageMark(from, to, run, dest);
+    mark.source = PassageSource::kCollision;
+    marks->push_back(mark);
+    width += run.length;
+  }
+  return width;
+}
+
+// Regra do Ato I, sem ativar nada (L sec. 4.1): entre as salas do nivel que tocam o
+// trecho comum, a da passagem e a unica de variante >= 3.
+bool Act1RulePassage(const MemoryView& mem, const Scan& scan, const std::vector<RoomRef>& rooms,
+                     const Point& from, const Point& to, int32_t dest, Mark* mark) {
+  uint32_t drlg_type = 0;
+  if (scan.act_index != 0 || !IsAct1RuleBorder(scan.level_id, dest) ||
+      !ReadU32(mem, scan.level + kLevelDrlgType, &drlg_type) || drlg_type != kLevelTypeExternal) {
+    return false;
+  }
+  const RoomRef* found = nullptr;
+  for (const RoomRef& room : rooms) {
+    if (!RoomTouchesEdge(room.rect, from, to)) continue;
+    uint32_t data = 0;
+    uint32_t cell = 0;
+    int32_t variant = 0;
+    if (!ReadU32(mem, room.room2 + kRoom2TypeData, &data) ||
+        !ReadU32(mem, data + kTypeDataGeneratorCell, &cell) ||
+        !ReadI32(mem, cell + kGeneratorCellVariant, &variant)) {
+      return false;
+    }
+    if (variant < kAct1PassageVariant) continue;
+    if (found != nullptr) return false;  // a regra pede exatamente uma sala
+    found = &room;
+  }
+  if (found == nullptr) return false;
+  const bool vertical = from.x == to.x;
+  const int32_t origin = (vertical ? found->rect.y : found->rect.x) * 5;
+  const int32_t begin = (vertical ? from.y : from.x) * 5;
+  const int32_t end = (vertical ? to.y : to.x) * 5;
+  EdgeRun run = Act1RuleRun(origin);
+  if (run.start < begin || run.start + run.length > end) return false;
+  run.start -= begin;
+  *mark = PassageMark(from, to, run, dest);
+  mark->source = PassageSource::kAct1Rule;
+  return true;
+}
+
+// O que ja foi calculado pela colisao continua valendo depois que as salas
+// descarregam. Fica o maior trecho visto: um trecho visto com parte das salas
+// carregadas pode estar cortado.
+void UpdateMemo(const Scan& scan, ScanMemo* memo, int32_t dest, int32_t* width,
+                std::vector<Mark>* marks) {
+  if (memo == nullptr) return;
+  for (ScanMemo::Passage& e : memo->passages) {
+    if (e.level != scan.level_id || e.dest != dest) continue;
+    if (*width >= e.width) {
+      e.width = *width;
+      e.marks = *marks;
+    } else {
+      *width = e.width;
+      *marks = e.marks;
+    }
+    return;
+  }
+  if (*width > 0) memo->passages.push_back(ScanMemo::Passage{scan.level_id, dest, *width, *marks});
+}
+
+// Vizinhos abertos: Vis[n] != 0 com Warp[n] = -1 e retangulos que se tocam (L sec.
+// 4.1). A lista de vizinhas das salas nao entra: ela da a fronteira, nao a passagem.
+// Exata so pela colisao ou pela regra do Ato I; o resto e o trecho comum, que diz onde
+// a passagem esta, nao a passagem.
+// TODO(RE): posicao exata sem ativar sala fora do Ato I; passagem aberta no Ato IV.
+void ScanOpenBorders(const MemoryView& mem, const ScanOptions& options,
+                     const std::vector<RoomRef>& rooms, Scan* scan) {
   uint32_t drlg_act = 0;
   const TileRect self = scan->level_rect;
   if (!scan->links_ok || !ValidRect(self) ||
@@ -677,31 +952,38 @@ void AddApproxPassages(const MemoryView& mem, Scan* scan) {
     return;
   }
   std::vector<int32_t> done;
-  for (const Mark& m : scan->marks) {
-    if (m.kind == MarkKind::kPassage) done.push_back(m.dest_level);
-  }
   for (int n = 0; n < 8; ++n) {
     const int32_t dest = scan->vis[n];
     if (dest <= 0 || scan->warp[n] != -1) continue;
     if (std::find(done.begin(), done.end(), dest) != done.end()) continue;
     done.push_back(dest);
     // So leitura: o nivel pode ainda nao existir (nao chama GetLevel).
-    uint32_t other = 0;
-    if (!ReadU32(mem, drlg_act + kDrlgActFirstLevel, &other)) return;
-    for (uint32_t i = 0; other != 0 && i < kMaxLevels; ++i) {
-      int32_t id = 0;
-      if (!ReadI32(mem, other + kLevelId, &id)) break;
-      if (id == dest) break;
-      if (!ReadU32(mem, other + kLevelNext, &other)) other = 0;
-    }
+    const uint32_t other = FindLevelInAct(mem, drlg_act, dest);
     TileRect rect;
     Point from;
     Point to;
-    if (other == 0 || !ReadLevelRect(mem, other, &rect) ||
-        !SharedEdge(self, rect, &from, &to)) {
+    if (other == 0 || !ReadLevelRect(mem, other, &rect) || !SharedEdge(self, rect, &from, &to)) {
+      continue;
+    }
+    std::vector<Mark> exact;
+    int32_t width = 0;
+    if (options.passage_collision) {
+      width = CollisionPassage(mem, rooms, other, from, to, dest, &exact);
+      UpdateMemo(*scan, options.memo, dest, &width, &exact);
+    }
+    if (width > 0) {
+      scan->marks.insert(scan->marks.end(), exact.begin(), exact.end());
+      scan->stats.passages += static_cast<uint32_t>(exact.size());
       continue;
     }
     Mark mark;
+    if (Act1RulePassage(mem, *scan, rooms, from, to, dest, &mark)) {
+      scan->marks.push_back(mark);
+      ++scan->stats.passages;
+      ++scan->stats.passages_rule;
+      continue;
+    }
+    mark = Mark{};
     mark.kind = MarkKind::kPassageApprox;
     mark.points = 2;
     mark.primary = true;
@@ -751,7 +1033,7 @@ void LabelPassages(Scan* scan) {
     }
     if (best != nullptr) best->primary = true;
   }
-  scan->stats.passage_levels = static_cast<uint32_t>(done.size());
+  scan->stats.passage_levels += static_cast<uint32_t>(done.size());
 }
 
 }  // namespace
@@ -799,6 +1081,15 @@ const std::vector<AnchorSpec>& Anchors() {
   return kAnchors;
 }
 
+// Simbolo que entra pelo proprio endereco: a conferencia dos bytes e o que importa.
+struct GatedSymbol {
+  const char* symbol;
+  uint32_t GameAddresses::*field;
+};
+constexpr GatedSymbol kGatedSymbols[] = {
+    {"D2Common.GetUnitAlignment", &GameAddresses::unit_alignment},
+};
+
 std::vector<std::string> RequiredSymbols() {
   std::vector<std::string> names;
   for (const AnchorSpec& a : Anchors()) {
@@ -806,6 +1097,7 @@ std::vector<std::string> RequiredSymbols() {
       names.emplace_back(a.symbol);
     }
   }
+  for (const GatedSymbol& g : kGatedSymbols) names.emplace_back(g.symbol);
   return names;
 }
 
@@ -846,6 +1138,11 @@ void ResolveAddresses(const MemoryView& anchors, ResolveFn resolve, void* contex
     }
     field = value;
   }
+  for (const GatedSymbol& g : kGatedSymbols) {
+    const size_t i =
+        static_cast<size_t>(std::find(names.begin(), names.end(), g.symbol) - names.begin());
+    out->*(g.field) = bases[i];
+  }
 }
 
 uint32_t AvailableFeatures(const GameAddresses& a) {
@@ -862,6 +1159,7 @@ uint32_t AvailableFeatures(const GameAddresses& a) {
   if (a.objects_base != 0 && a.objects_count != 0) f |= kFeatureObjectTable;
   if (a.panel_side != 0 && a.ui_state != 0) f |= kFeaturePanels;
   if (a.frame_width != 0 && a.frame_height != 0) f |= kFeatureFrameSize;
+  if (a.unit_alignment != 0) f |= kFeatureAlignment;
   return f;
 }
 
@@ -942,6 +1240,13 @@ Point SubtileToClient(int32_t x, int32_t y) {
   return p;
 }
 
+Point ClientToSubtile(int32_t cx, int32_t cy) {
+  Point p;
+  p.x = (cx / 16 + cy / 8) / 2;
+  p.y = (cy / 8 - cx / 16) / 2;
+  return p;
+}
+
 Point ClientToAutomap(int32_t cx, int32_t cy, const AutomapView& view) {
   Point p;
   if (view.divisor <= 0) return p;
@@ -1007,9 +1312,92 @@ bool ReadLevelLinks(const MemoryView& mem, const GameAddresses& addr, uint32_t l
 const WarpRoom* NextRoomToReveal(const Scan& scan, const std::vector<uint32_t>& done) {
   for (const WarpRoom& r : scan.warp_rooms) {
     if (r.loaded || r.load_count != 0 || HasExactExit(scan, scan.warp[r.n])) continue;
+    if (ActOfLevel(scan.vis[r.n]) != scan.act_index) continue;
     if (std::find(done.begin(), done.end(), r.room) == done.end()) return &r;
   }
   return nullptr;
+}
+
+const char* RevealBlockReason(const MemoryView& mem, const Scan& scan) {
+  if (!scan.in_game || scan.act == 0 || scan.player_room == 0 || scan.level == 0) {
+    return "fora da partida";
+  }
+  // Sem sala ativa o nivel perde as Room2 e as predefinidas (L sec. 3.1).
+  if (scan.stats.rooms_loaded == 0) return "nivel sem sala ativa";
+  // Pedir nivel de outro ato fecha o jogo (L sec. 3.1).
+  uint32_t room_act = 0;
+  int32_t act_number = -1;
+  if (!ReadU32(mem, scan.player_room + kRoom1Act, &room_act) || room_act != scan.act) {
+    return "sala do jogador fora do ato do cliente";
+  }
+  if (!ReadI32(mem, scan.act + kActIndex, &act_number) || act_number != scan.act_index ||
+      ActOfLevel(scan.level_id) != act_number) {
+    return "nivel fora do ato do cliente";
+  }
+  uint32_t drlg_act = 0;
+  uint32_t back = 0;
+  if (!ReadU32(mem, scan.act + kActDrlgAct, &drlg_act) ||
+      !ReadU32(mem, drlg_act + kDrlgActBackToAct, &back) || back != scan.act) {
+    return "DrlgAct nao confere com o ato";
+  }
+  if (FindLevelInAct(mem, drlg_act, scan.level_id) != scan.level) {
+    return "nivel fora da corrente do ato";
+  }
+  return nullptr;
+}
+
+int32_t ActOfLevel(int32_t level_id) {
+  if (level_id < 1 || level_id >= kLevelDefsSeen) return -1;
+  if (level_id >= 109) return 4;
+  if (level_id >= 103) return 3;
+  if (level_id >= 75) return 2;
+  if (level_id >= 40) return 1;
+  return 0;
+}
+
+bool ReadObjectName(const MemoryView& mem, const GameAddresses& addr, uint32_t object_class,
+                    char* out, uint32_t out_size) {
+  uint32_t base = 0;
+  uint32_t count = 0;
+  char name[kObjectNameSize];
+  if (out_size == 0 || !ReadU32(mem, addr.objects_base, &base) || base == 0 ||
+      !ReadU32(mem, addr.objects_count, &count) || object_class >= count ||
+      !mem.Read(base + object_class * kObjectRecordSize, name, kObjectNameSize)) {
+    return false;
+  }
+  const uint32_t limit = std::min(out_size - 1, kObjectNameSize - 1);
+  uint32_t n = 0;
+  for (; n < limit && name[n] != '\0'; ++n) out[n] = name[n];
+  out[n] = '\0';
+  return true;
+}
+
+bool ReadUnitAlignment(const MemoryView& mem, uint32_t unit, int32_t* out) {
+  *out = 0;
+  uint32_t list = 0;
+  if (!ReadU32(mem, unit + kUnitStats, &list)) return false;
+  if (list == 0) return true;  // sem stats: 0
+  uint32_t sub = 0;
+  if (!ReadU32(mem, list + kStatsFirstSubList, &sub)) return false;
+  for (uint32_t i = 0; sub != 0 && i < kMaxSubLists; ++i) {
+    Block<kSubListBlock> b;
+    if (!b.Load(mem, sub)) return false;
+    if (b.U32(kSubListState) == kStateAlignment) {
+      const uint32_t pairs = b.U32(kSubListPairs);
+      const uint32_t count = b.U16(kSubListPairCount);
+      if (count > kMaxStatPairs) return false;
+      for (uint32_t k = 0; k < count; ++k) {
+        uint32_t stat = 0;
+        if (!ReadU32(mem, pairs + k * kStatPairSize, &stat)) return false;
+        if ((stat >> 16) == kStatAlignment) {
+          return ReadI32(mem, pairs + k * kStatPairSize + 4, out);
+        }
+      }
+      return true;  // estado sem o stat: 0
+    }
+    sub = b.U32(kSubListNext);
+  }
+  return sub == 0;  // lista longa demais: memoria corrompida
 }
 
 void ScanGame(const MemoryView& mem, const GameAddresses& addr, const ScanOptions& options,
@@ -1043,34 +1431,45 @@ void ScanGame(const MemoryView& mem, const GameAddresses& addr, const ScanOption
   out->links_ok = ReadLevelLinks(mem, addr, level, level_id, out->vis, out->warp);
   Tables tables;
   tables.player_id = unit.U32(kUnitId);
+  tables.alignment_ok = addr.unit_alignment != 0;
   ReadAllies(mem, addr, &tables);
   if (ReadU32(mem, addr.objects_base, &tables.objects_base)) {
     ReadU32(mem, addr.objects_count, &tables.objects_count);
   }
+  if (options.memo != nullptr) {
+    uint32_t seed = 0;
+    ReadU32(mem, out->act + kActSeed, &seed);
+    if (options.memo->act != out->act || options.memo->seed != seed) {
+      *options.memo = ScanMemo{};
+      options.memo->act = out->act;
+      options.memo->seed = seed;
+    }
+  }
   std::vector<TileRect> waypoint_rooms;
-  ScanRooms(mem, options, tables, out, &waypoint_rooms);
+  std::vector<RoomRef> rooms;
+  ScanRooms(mem, options, tables, out, &waypoint_rooms, &rooms);
   ScanUnits(mem, addr, options, tables, out);
   AddWaypointRooms(waypoint_rooms, out);
   if (options.exits) {
     AddExitRooms(out);
+    ScanOpenBorders(mem, options, rooms, out);
     LabelPassages(out);
-    AddApproxPassages(mem, out);
   }
 }
 
 MonsterClass ClassifyMonster(uint32_t mode, uint32_t monstats_flags, uint8_t type_flags,
-                             bool is_ally) {
+                             bool is_ally, Alignment alignment) {
   if (mode == kModeDying || mode == kModeDead) return MonsterClass::kHidden;
-  // Mercenario e hidras passam nos bits de monstats: a lista vem antes (U sec. 4).
-  // TODO(RE): so mercenario (tipo 7) e hidra (tipo 19) foram vistos na lista, com
-  // um jogador; golem, esqueleto, valquiria e lobos nao (U sec. 7.1).
+  // TODO(RE): esqueleto, revivido e monstro convertido nao foram vistos (U sec. 7.1).
   if (is_ally) return MonsterClass::kAlly;
   if ((monstats_flags & kMonStatsNpc) != 0) return MonsterClass::kNpc;
   // Sem 0x8000: ambiente da cidade (galinhas etc.), nao e inimigo.
-  // TODO(RE): a classe 359 passa nestes bits na cidade do Ato III (vista nas tres
-  // dificuldades) e aparece como hostil; o filtro so foi conferido numa amostra de
-  // classes (U sec. 8, item 6) e a coluna que a distingue nao esta na spec.
   if ((monstats_flags & kMonStatsKillable) == 0) return MonsterClass::kHidden;
+  // Passa nos bits, mas nao e hostil: classes 359 e 522, sem no na lista (U sec. 4).
+  if (alignment == Alignment::kFriendly) return MonsterClass::kFriendly;
+  if (alignment == Alignment::kUnknown && (monstats_flags & kMonStatsInTown) != 0) {
+    return MonsterClass::kFriendly;
+  }
   // Superunico e campeao tambem tem o bit de unico: a ordem importa (U sec. 4).
   if ((type_flags & kMonsterSuperUnique) != 0) return MonsterClass::kSuperUnique;
   if ((type_flags & kMonsterChampion) != 0) return MonsterClass::kChampion;
@@ -1079,7 +1478,39 @@ MonsterClass ClassifyMonster(uint32_t mode, uint32_t monstats_flags, uint8_t typ
   return MonsterClass::kNormal;
 }
 
-ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class) {
+bool IsQuestOperateFn(uint8_t operate_fn) {
+  switch (operate_fn) {
+    case 6:
+    case 9:
+    case 10:
+    case 12:
+    case 21:
+    case 24:
+    case 25:
+    case 28:
+    case 31:
+    case 39:
+    case 40:
+    case 41:
+    case 42:
+    case 49:
+    case 52:
+    case 53:
+    case 54:
+    case 55:
+    case 56:
+    case 57:
+    case 58:
+    case 59:
+    case 65:
+    case 67:
+      return true;
+    default:
+      return false;
+  }
+}
+
+ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class, uint8_t operate_fn) {
   if ((sub_class & kSubClassWaypoint) != 0) return ObjectKind::kWaypoint;
   if ((sub_class & kSubClassPlayerOrRedPortal) != 0) {
     if (object_class == kObjectClassBluePortal) return ObjectKind::kPortalBlue;
@@ -1087,7 +1518,20 @@ ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class) {
     return ObjectKind::kPortalOther;
   }
   if ((sub_class & kSubClassLevelPortal) != 0) return ObjectKind::kPortalOther;
+  if (IsQuestOperateFn(operate_fn) || object_class == kObjectClassQuestPlaceholder ||
+      object_class == kObjectClassQuestCage) {
+    return ObjectKind::kQuest;
+  }
   return ObjectKind::kOther;
+}
+
+int32_t FixedPortalDestination(uint32_t object_class, int32_t level_id) {
+  if (object_class == kObjectClassArcanePortal) {
+    if (level_id == 74) return 54;
+    if (level_id == 54) return 74;
+  }
+  if (object_class == kObjectClassDurancePortal && level_id == 102) return 103;
+  return -1;
 }
 
 bool IsTownLevel(int32_t level_id) {
@@ -1118,6 +1562,41 @@ bool SharedEdge(const TileRect& a, const TileRect& b, Point* from, Point* to) {
   return false;
 }
 
+bool RoomTouchesEdge(const TileRect& room, const Point& from, const Point& to) {
+  if (from.x == to.x) {
+    return (room.x == from.x || room.x + room.w == from.x) && room.y < to.y &&
+           room.y + room.h > from.y;
+  }
+  return (room.y == from.y || room.y + room.h == from.y) && room.x < to.x &&
+         room.x + room.w > from.x;
+}
+
+std::vector<EdgeRun> FreeRuns(const std::vector<EdgeCell>& cells) {
+  std::vector<EdgeRun> runs;
+  int32_t start = -1;
+  const int32_t n = static_cast<int32_t>(cells.size());
+  for (int32_t i = 0; i <= n; ++i) {
+    const bool free_cell = i < n && cells[static_cast<size_t>(i)] == EdgeCell::kFree;
+    if (free_cell && start < 0) start = i;
+    if (!free_cell && start >= 0) {
+      runs.push_back(EdgeRun{start, i - start});
+      start = -1;
+    }
+  }
+  return runs;
+}
+
+bool IsAct1RuleBorder(int32_t level_a, int32_t level_b) {
+  const int32_t low = std::min(level_a, level_b);
+  const int32_t high = std::max(level_a, level_b);
+  return (low == 2 && high == 3) || (low == 3 && high == 4) || (low == 3 && high == 17) ||
+         (low == 5 && high == 6) || (low == 6 && high == 7);
+}
+
+EdgeRun Act1RuleRun(int32_t room_origin_subtile) {
+  return EdgeRun{room_origin_subtile + kAct1RuleFirstCell, kAct1RuleCells};
+}
+
 void ProjectMarks(const std::vector<Mark>& marks, const AutomapView& view,
                   std::vector<ScreenMark>* out) {
   out->clear();
@@ -1126,6 +1605,7 @@ void ProjectMarks(const std::vector<Mark>& marks, const AutomapView& view,
     s.kind = m.kind;
     s.points = m.points;
     s.primary = m.primary;
+    s.used = m.used;
     s.dest_level = m.dest_level;
     s.label = m.label;
     int32_t min_x = 0;

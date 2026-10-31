@@ -225,6 +225,12 @@ expect "o mod desliga so os monstros"              '\[map-overlay\] recurso desl
 forbid "o resto do mapa segue ativo"               '\[map-overlay\] .*mod inativo'
 forbid "sem excecoes de 1a chance (mapa, simbolo recusado)" 'excecao de 1a chance'
 cp "$WORK/1.14d.ini.orig" "$ADDR_INI"
+# Idem para o simbolo do alinhamento: os hostis ficam so pelos bits, e o log avisa.
+sed -i '/^\[symbol\.D2Common\.GetUnitAlignment\]/,/^description/ s/^bytes *= *55 /bytes       = 54 /' "$ADDR_INI"
+run_game 10
+expect "alinhamento recusado: o mod avisa no log"  '\[map-overlay\] recurso desligado: alinhamento'
+forbid "alinhamento recusado: o mapa segue ativo"  '\[map-overlay\] .*mod inativo'
+cp "$WORK/1.14d.ini.orig" "$ADDR_INI"
 # Outro mod desviou o DrawAutomap ANTES do map-overlay: as ancoras vem dos bytes
 # originais (read_original) e os dois ganchos encadeiam.
 mkdir -p "$MODS/mapdrive"
@@ -271,9 +277,9 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" ]]; then
   expect "mapa: em partida com o automap aberto"         '\[map-overlay\] em partida, automap aberto'
   expect "mapa: automap em tela cheia (divisor 10, recorte 800x600)" '\[map-overlay\] automap: modo 0, divisor 10, .*recorte lido \(-16,-16,800,600\)'
   expect "mapa: automap em minimapa (divisor 20)"        '\[map-overlay\] automap: modo 1, divisor 20, .*recorte lido'
-  expect "mapa: cidade lida (salas, NPCs, waypoint, borda)" '\[map-overlay\] nivel 1: [0-9]+ salas .*, [1-9][0-9]* NPCs, 1 waypoints \(0 pela sala\), .*trechos de borda para 1 nivel.*ato 1 \(cidade\)'
+  expect "mapa: cidade lida (salas, NPCs, waypoint, borda)" '\[map-overlay\] nivel 1: [0-9]+ salas .*, [1-9][0-9]* NPCs, 1 waypoints \(0 pela sala\), .*para 1 nivel.*ato 1 \(cidade\)'
   expect "mapa: waypoint pela coluna do jogo, sem configuracao" '\[map-overlay\]   waypoint classe 119, automap'
-  expect "mapa: saida pela borda para a Charneca (nivel 2)" '\[map-overlay\]   saida pela borda -> nivel 2 '
+  expect "mapa: saida pela borda para a Charneca (nivel 2)" '\[map-overlay\]   saida pela borda \([^)]*\) -> nivel 2,'
   expect "mapa: marcas desenhadas em tela cheia"         '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'
   expect "mapa: marcas desenhadas no minimapa"           '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 1'
   expect "mapa: tecla do mod desliga e religa as marcas" '\[map-overlay\] marcas desligadas'

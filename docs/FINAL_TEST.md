@@ -7,11 +7,12 @@ de teste. Tudo é reversível e nada da Blizzard passa pelo repositório.
 
 | Já provado no jogo real (Wine 11, 1.14d) | Depende do seu teste |
 |---|---|
-| instalar/desinstalar sem alterar o `Game.exe`; falha segura | a **imagem completa** sob o D2GL no seu monitor/GPU (aqui o D2GL só desenhou texto HD e cursor, **mesmo sem o Aeonian**) |
+| instalar/desinstalar sem alterar o `Game.exe`; falha segura | a imagem sob o D2GL no **seu** monitor e na **sua** GPU, e em tela cheia |
 | mod de arte: botões recoloridos no menu (diff de 11 mil pixels) | **desempenho** (FPS) em 144/240 Hz e 4K |
 | overlay/HUD sobre o jogo: GDI e D2GL/OpenGL | Windows nativo (não testei) |
 | D2GL instalado, `-3dfx` automático, `-w` removido | instalação **oficial** da loja (testei numa instalação reconstruída) |
 | vídeos de abertura pulados | — |
+| imagem completa sob o D2GL **oficial v1.3.3**, no menu e em partida (Normal, em janela, Wine 11.20, RX 9070 XT) | — |
 
 ## 1. Prepare (recomendado: cópia-espelho, sem tocar no original)
 

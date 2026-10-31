@@ -146,7 +146,7 @@ void TestAnchorsAgainstRealIni() {
   ResolveReport report;
   ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
   CHECK_EQ(report.resolved, report.total);
-  CHECK_EQ(report.total, 18u);
+  CHECK_EQ(report.total, 19u);
   CHECK(report.missing.empty());
   CHECK(report.notes.empty());
   // Os VAs que as specs documentam.
@@ -168,9 +168,11 @@ void TestAnchorsAgainstRealIni() {
   CHECK_EQ(a.ally_list, 0x7BB5BCu);
   CHECK_EQ(a.objects_base, 0x96D470u);
   CHECK_EQ(a.objects_count, 0x96D474u);
+  CHECK_EQ(a.unit_alignment, 0x6259B0u);
   const uint32_t all = kFeatureAutomap | kFeatureMonsters | kFeatureObjectUnits |
                        kFeatureLevelLinks | kFeatureClip | kFeatureAllies |
-                       kFeatureObjectTable | kFeaturePanels | kFeatureFrameSize;
+                       kFeatureObjectTable | kFeaturePanels | kFeatureFrameSize |
+                       kFeatureAlignment;
   CHECK_EQ(AvailableFeatures(a), all);
 
   // Um simbolo recusado desliga so o que depende dele.
@@ -197,6 +199,10 @@ void TestAnchorsAgainstRealIni() {
   resolver.refuse = {"D2Client.GetUiState"};
   ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
   CHECK_EQ(AvailableFeatures(a), all & ~static_cast<uint32_t>(kFeaturePanels));
+  resolver.refuse = {"D2Common.GetUnitAlignment"};
+  ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
+  CHECK_EQ(a.unit_alignment, 0u);
+  CHECK_EQ(AvailableFeatures(a), all & ~static_cast<uint32_t>(kFeatureAlignment));
   resolver.refuse = {"D2Client.ScreenSizeAnchor"};
   ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
   CHECK_EQ(AvailableFeatures(a), all & ~static_cast<uint32_t>(kFeatureFrameSize));
@@ -249,6 +255,9 @@ void TestFormula() {
   CHECK_EQ(c.y, 89408);
   CHECK_EQ(TileToClient(2, 1).x, (10 - 5) * 16);
   CHECK_EQ(TileToClient(2, 1).y, (10 + 5) * 8);
+  const Point back = ClientToSubtile(c.x, c.y);
+  CHECK_EQ(back.x, 5653);
+  CHECK_EQ(back.y, 5523);
 
   AutomapView v;
   v.divisor = 10;
@@ -299,47 +308,110 @@ void TestFormula() {
 }
 
 void TestClassify() {
+  const Alignment other = Alignment::kOther;
   // Valores de monstats+0x0C observados (spec de unidades sec. 4).
-  CHECK(ClassifyMonster(1, 0x02418803, 0, false) == MonsterClass::kNormal);   // ZM
-  CHECK(ClassifyMonster(2, 0x12018001, 0, false) == MonsterClass::kNormal);   // SI
-  CHECK(ClassifyMonster(0, 0x12018001, 0, false) == MonsterClass::kHidden);   // morrendo
-  CHECK(ClassifyMonster(12, 0x12018001, 0, false) == MonsterClass::kHidden);  // cadaver
-  CHECK(ClassifyMonster(1, 0x03010703, 0, false) == MonsterClass::kNpc);      // Akara
-  CHECK(ClassifyMonster(1, 0x02010703, 0, false) == MonsterClass::kNpc);      // Kashya
-  CHECK(ClassifyMonster(1, 0x02018502, 0, false) == MonsterClass::kNpc);      // RG
-  CHECK(ClassifyMonster(1, 0x02010402, 0, false) == MonsterClass::kHidden);   // CK
-  CHECK(ClassifyMonster(1, 0x02010403, 0, false) == MonsterClass::kHidden);   // CW
-  CHECK(ClassifyMonster(1, 0x02040401, 0, false) == MonsterClass::kHidden);   // 567-569
+  CHECK(ClassifyMonster(1, 0x02418803, 0, false, other) == MonsterClass::kNormal);   // ZM
+  CHECK(ClassifyMonster(2, 0x12018001, 0, false, other) == MonsterClass::kNormal);   // SI
+  CHECK(ClassifyMonster(0, 0x12018001, 0, false, other) == MonsterClass::kHidden);   // morrendo
+  CHECK(ClassifyMonster(12, 0x12018001, 0, false, other) == MonsterClass::kHidden);  // cadaver
+  CHECK(ClassifyMonster(1, 0x03010703, 0, false, Alignment::kFriendly) == MonsterClass::kNpc);
+  CHECK(ClassifyMonster(1, 0x02010703, 0, false, Alignment::kFriendly) == MonsterClass::kNpc);
+  CHECK(ClassifyMonster(1, 0x02018502, 0, false, Alignment::kFriendly) == MonsterClass::kNpc);
+  CHECK(ClassifyMonster(1, 0x02010402, 0, false, other) == MonsterClass::kHidden);   // CK
+  CHECK(ClassifyMonster(1, 0x02010403, 0, false, other) == MonsterClass::kHidden);   // CW
+  CHECK(ClassifyMonster(1, 0x02040401, 0, false, other) == MonsterClass::kHidden);   // 567-569
   // Bytes de tipo vistos ao vivo: superunico e campeao tem tambem o bit de unico.
-  CHECK(ClassifyMonster(1, 0x02418803, 0x0A, false) == MonsterClass::kSuperUnique);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x0C, false) == MonsterClass::kChampion);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x08, false) == MonsterClass::kUnique);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x10, false) == MonsterClass::kMinion);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x02, false) == MonsterClass::kSuperUnique);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x04, false) == MonsterClass::kChampion);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x00, false) == MonsterClass::kNormal);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x0A, false, other) == MonsterClass::kSuperUnique);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x0C, false, other) == MonsterClass::kChampion);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x08, false, other) == MonsterClass::kUnique);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x10, false, other) == MonsterClass::kMinion);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x02, false, other) == MonsterClass::kSuperUnique);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x04, false, other) == MonsterClass::kChampion);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x00, false, other) == MonsterClass::kNormal);
   // Aliado passa nos bits de hostil, mas a lista vem antes; morto continua oculto.
-  CHECK(ClassifyMonster(1, 0x02418803, 0x00, true) == MonsterClass::kAlly);
-  CHECK(ClassifyMonster(1, 0x02418803, 0x0C, true) == MonsterClass::kAlly);
-  CHECK(ClassifyMonster(12, 0x02418803, 0x00, true) == MonsterClass::kHidden);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x00, true, Alignment::kFriendly) == MonsterClass::kAlly);
+  CHECK(ClassifyMonster(1, 0x02418803, 0x0C, true, other) == MonsterClass::kAlly);
+  CHECK(ClassifyMonster(12, 0x02418803, 0x00, true, other) == MonsterClass::kHidden);
+  // Classes 359 e 522: passam nos bits, alinhamento 2, sem no na lista (U sec. 4).
+  CHECK(ClassifyMonster(1, 0x02018408, 0, false, Alignment::kFriendly) == MonsterClass::kFriendly);
+  CHECK(ClassifyMonster(1, 0x0205840B, 0, false, Alignment::kFriendly) == MonsterClass::kFriendly);
+  CHECK(ClassifyMonster(12, 0x02018408, 0, false, Alignment::kFriendly) == MonsterClass::kHidden);
+  // Mesmo com 0x400, alinhamento conhecido e diferente de 2 e hostil.
+  CHECK(ClassifyMonster(1, 0x02018408, 0, false, other) == MonsterClass::kNormal);
+  // Sem alinhamento: recusa 0x400, e os demais seguem pelos bits.
+  CHECK(ClassifyMonster(1, 0x02018408, 0, false, Alignment::kUnknown) == MonsterClass::kFriendly);
+  CHECK(ClassifyMonster(1, 0x0205840B, 0, false, Alignment::kUnknown) == MonsterClass::kFriendly);
+  CHECK(ClassifyMonster(1, 0x02418803, 0, false, Alignment::kUnknown) == MonsterClass::kNormal);
+  CHECK(ClassifyMonster(1, 0x02418803, 0, true, Alignment::kUnknown) == MonsterClass::kAlly);
 
   // Colunas de objects (spec de unidades sec. 5).
   for (uint32_t cls : {119u, 156u, 237u, 238u, 324u, 402u, 496u, 511u}) {
-    CHECK(ClassifyObject(cls, 0x40) == ObjectKind::kWaypoint);
+    CHECK(ClassifyObject(cls, 0x40, 23) == ObjectKind::kWaypoint);
   }
-  CHECK(ClassifyObject(59, 0x04) == ObjectKind::kPortalBlue);
-  CHECK(ClassifyObject(60, 0x04) == ObjectKind::kPortalRed);
-  CHECK(ClassifyObject(298, 0x10) == ObjectKind::kPortalOther);
-  CHECK(ClassifyObject(342, 0x10) == ObjectKind::kPortalOther);
-  CHECK(ClassifyObject(267, 0x08) == ObjectKind::kOther);  // bau
-  CHECK(ClassifyObject(2, 0x01) == ObjectKind::kOther);    // santuario
-  CHECK(ClassifyObject(3, 0x00) == ObjectKind::kOther);
+  CHECK(ClassifyObject(59, 0x04, 15) == ObjectKind::kPortalBlue);
+  CHECK(ClassifyObject(60, 0x04, 15) == ObjectKind::kPortalRed);
+  CHECK(ClassifyObject(298, 0x10, 34) == ObjectKind::kPortalOther);
+  CHECK(ClassifyObject(342, 0x10, 46) == ObjectKind::kPortalOther);
+  CHECK(ClassifyObject(267, 0x08, 0) == ObjectKind::kOther);  // bau
+  CHECK(ClassifyObject(2, 0x01, 0) == ObjectKind::kOther);    // santuario
+  CHECK(ClassifyObject(3, 0x00, 0) == ObjectKind::kOther);
   // A classe sozinha nao faz waypoint nem portal: vale a coluna.
-  CHECK(ClassifyObject(119, 0x00) == ObjectKind::kOther);
-  CHECK(ClassifyObject(59, 0x00) == ObjectKind::kOther);
+  CHECK(ClassifyObject(119, 0x00, 0) == ObjectKind::kOther);
+  CHECK(ClassifyObject(59, 0x00, 0) == ObjectKind::kOther);
+
+  // Objetivos: os 24 valores da spec, e nenhum outro dos 0x65 da tabela.
+  const uint8_t quest_fns[] = {6,  9,  10, 12, 21, 24, 25, 28, 31, 39, 40, 41,
+                               42, 49, 52, 53, 54, 55, 56, 57, 58, 59, 65, 67};
+  int quest_count = 0;
+  for (uint32_t fn = 0; fn < 0x65; ++fn) {
+    if (IsQuestOperateFn(static_cast<uint8_t>(fn))) ++quest_count;
+  }
+  CHECK_EQ(quest_count, 24);
+  for (uint8_t fn : quest_fns) {
+    CHECK(IsQuestOperateFn(fn));
+    CHECK(ClassifyObject(600, 0x00, fn) == ObjectKind::kQuest);
+  }
+  // Falsos positivos do criterio cru: passagens e pecas de roteiro de codigo de quest.
+  const uint8_t scripted_fns[] = {44, 45, 62, 63, 64, 66, 69, 70, 71, 72, 73};
+  for (uint8_t fn : scripted_fns) CHECK(!IsQuestOperateFn(fn));
+  // Waypoint e portal nao sao objetivos; 268 (OperateFn 33) nao entra.
+  const uint8_t passage_fns[] = {0, 15, 23, 33, 34, 43, 46};
+  for (uint8_t fn : passage_fns) CHECK(!IsQuestOperateFn(fn));
+  // A coluna SubClass ganha do OperateFn.
+  CHECK(ClassifyObject(342, 0x10, 6) == ObjectKind::kPortalOther);
+  CHECK(ClassifyObject(119, 0x40, 6) == ObjectKind::kWaypoint);
+  // Falsos negativos que a spec aponta, com OperateFn 0.
+  CHECK(ClassifyObject(460, 0x00, 0) == ObjectKind::kQuest);
+  CHECK(ClassifyObject(473, 0x00, 0) == ObjectKind::kQuest);
+  CHECK(ClassifyObject(558, 0x00, 67) == ObjectKind::kQuest);
+  for (uint32_t cls : {251u, 378u, 379u, 382u}) {  // pecas de roteiro do nivel 75
+    CHECK(ClassifyObject(cls, 0x00, 0) == ObjectKind::kOther);
+  }
+
+  // Destino pelo nivel atual (U sec. 5.3).
+  CHECK_EQ(FixedPortalDestination(298, 74), 54);
+  CHECK_EQ(FixedPortalDestination(298, 54), 74);
+  CHECK_EQ(FixedPortalDestination(342, 102), 103);
+  CHECK_EQ(FixedPortalDestination(298, 2), -1);
+  CHECK_EQ(FixedPortalDestination(342, 74), -1);
+  CHECK_EQ(FixedPortalDestination(59, 74), -1);
 
   for (int32_t town : {1, 40, 75, 103, 109}) CHECK(IsTownLevel(town));
-  for (int32_t other : {0, 2, 41, 74, 76, 104, 108, 110, 137}) CHECK(!IsTownLevel(other));
+  for (int32_t other_level : {0, 2, 41, 74, 76, 104, 108, 110, 137}) {
+    CHECK(!IsTownLevel(other_level));
+  }
+  CHECK_EQ(ActOfLevel(1), 0);
+  CHECK_EQ(ActOfLevel(39), 0);
+  CHECK_EQ(ActOfLevel(40), 1);
+  CHECK_EQ(ActOfLevel(74), 1);
+  CHECK_EQ(ActOfLevel(75), 2);
+  CHECK_EQ(ActOfLevel(102), 2);
+  CHECK_EQ(ActOfLevel(103), 3);
+  CHECK_EQ(ActOfLevel(108), 3);
+  CHECK_EQ(ActOfLevel(109), 4);
+  CHECK_EQ(ActOfLevel(136), 4);
+  CHECK_EQ(ActOfLevel(0), -1);
+  CHECK_EQ(ActOfLevel(137), -1);
 }
 
 // Paineis e tamanho do quadro (spec de niveis sec. 5.4 e 5.5).
@@ -490,6 +562,48 @@ void TestGeometry() {
   CHECK(!SharedEdge(TileRect{0, 0, 8, 8}, TileRect{8, 8, 8, 8}, &a, &b));   // so o canto
   CHECK(!SharedEdge(TileRect{0, 0, 8, 8}, TileRect{20, 0, 8, 8}, &a, &b));  // separadas
 
+  // Salas que tocam o trecho x = 984, y de 1080 a 1120 (spec de niveis sec. 4.1).
+  const Point edge_a{984, 1080};
+  const Point edge_b{984, 1120};
+  CHECK(RoomTouchesEdge(TileRect{976, 1080, 8, 8}, edge_a, edge_b));
+  CHECK(RoomTouchesEdge(TileRect{984, 1112, 8, 8}, edge_a, edge_b));
+  CHECK(RoomTouchesEdge(TileRect{976, 1076, 8, 8}, edge_a, edge_b));   // canto: toca em parte
+  CHECK(!RoomTouchesEdge(TileRect{976, 1072, 8, 8}, edge_a, edge_b));  // so a ponta
+  CHECK(!RoomTouchesEdge(TileRect{976, 1120, 8, 8}, edge_a, edge_b));
+  CHECK(!RoomTouchesEdge(TileRect{968, 1080, 8, 8}, edge_a, edge_b));  // nao encosta
+  const Point flat_a{1000, 1080};
+  const Point flat_b{1064, 1080};
+  CHECK(RoomTouchesEdge(TileRect{1000, 1072, 8, 8}, flat_a, flat_b));
+  CHECK(RoomTouchesEdge(TileRect{1056, 1080, 8, 8}, flat_a, flat_b));
+  CHECK(!RoomTouchesEdge(TileRect{1064, 1072, 8, 8}, flat_a, flat_b));
+
+  // Trechos livres.
+  const EdgeCell f = EdgeCell::kFree;
+  const EdgeCell w = EdgeCell::kBlocked;
+  const EdgeCell u = EdgeCell::kUnknown;
+  std::vector<EdgeRun> runs = FreeRuns({w, f, f, w, u, f, f, f});
+  CHECK_EQ(runs.size(), 2u);
+  if (runs.size() == 2) {
+    CHECK_EQ(runs[0].start, 1);
+    CHECK_EQ(runs[0].length, 2);
+    CHECK_EQ(runs[1].start, 5);
+    CHECK_EQ(runs[1].length, 3);
+  }
+  CHECK(FreeRuns({}).empty());
+  CHECK(FreeRuns({w, u}).empty());
+
+  // Regra do Ato I: 28 celulas, de +7 a +34 (na prova da spec, 5127 a 5154).
+  const EdgeRun rule = Act1RuleRun(5120);
+  CHECK_EQ(rule.start, 5127);
+  CHECK_EQ(rule.start + rule.length - 1, 5154);
+  for (int pair : {23, 34, 317, 56, 67}) {
+    CHECK(IsAct1RuleBorder(pair / (pair > 100 ? 100 : 10), pair % (pair > 100 ? 100 : 10)));
+    CHECK(IsAct1RuleBorder(pair % (pair > 100 ? 100 : 10), pair / (pair > 100 ? 100 : 10)));
+  }
+  CHECK(!IsAct1RuleBorder(1, 2));     // cidade: nao medida
+  CHECK(!IsAct1RuleBorder(7, 26));    // nao medida
+  CHECK(!IsAct1RuleBorder(41, 42));   // outro ato
+
   CanvasMap m = FitFrame(800, 600, 1280, 720, true);
   CHECK(m.scale_x > 1.199 && m.scale_x < 1.201);
   CHECK(m.offset_x > 159.9 && m.offset_x < 160.1);
@@ -541,6 +655,70 @@ struct World {
   uint32_t player_data = 0;
   uint32_t bucket_used[6] = {};
 
+  uint32_t NewRoom1(int32_t x, int32_t y, int32_t w, int32_t h) {  // subtiles; tudo livre
+    const uint32_t r = mem.Alloc(0x80);
+    const uint32_t grid = mem.Alloc(0x24);
+    const uint32_t cells = mem.Alloc(static_cast<uint32_t>(2 * w * h));
+    mem.Put32(r + 0x20, grid);
+    mem.Put32(r + 0x2C, act);
+    mem.PutI(grid + 0x00, x);
+    mem.PutI(grid + 0x04, y);
+    mem.PutI(grid + 0x08, w);
+    mem.PutI(grid + 0x0C, h);
+    mem.Put32(grid + 0x20, cells);
+    return r;
+  }
+  // Bloqueia as celulas [x0, x1) x [y0, y1) em subtiles.
+  void Block(uint32_t room1_ptr, int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
+    uint32_t grid = 0;
+    uint32_t cells = 0;
+    int32_t ox = 0;
+    int32_t oy = 0;
+    int32_t gw = 0;
+    mem.Read(room1_ptr + 0x20, &grid, 4);
+    mem.Read(grid + 0x20, &cells, 4);
+    mem.Read(grid + 0x00, &ox, 4);
+    mem.Read(grid + 0x04, &oy, 4);
+    mem.Read(grid + 0x08, &gw, 4);
+    for (int32_t y = y0; y < y1; ++y) {
+      for (int32_t x = x0; x < x1; ++x) {
+        mem.Put16(cells + static_cast<uint32_t>(2 * ((y - oy) * gw + (x - ox))), 0x0001);
+      }
+    }
+  }
+  // Variante da celula do gerador (Room2+0x20 -> +0x08 -> +0x04).
+  void Variant(uint32_t room, int32_t variant) {
+    const uint32_t data = mem.Alloc(0x10);
+    const uint32_t cell = mem.Alloc(0x20);
+    mem.Put32(room + 0x20, data);
+    mem.Put32(data + 0x08, cell);
+    mem.PutI(cell + 0x04, variant);
+  }
+  // Acrescenta uma sala a um nivel que nao e o atual.
+  void LinkOther(uint32_t of_level, uint32_t room) {
+    uint32_t head = 0;
+    mem.Read(of_level + 0x10, &head, 4);
+    mem.Put32(room + 0x24, head);
+    mem.Put32(of_level + 0x10, room);
+  }
+  // Alinhamento nos stats da unidade (lista +0x5C, sub-lista do estado 105).
+  void Align(uint32_t unit, int32_t value) {
+    const uint32_t list = mem.Alloc(0x40);
+    const uint32_t other_sub = mem.Alloc(0x30);
+    const uint32_t sub = mem.Alloc(0x30);
+    const uint32_t pairs = mem.Alloc(3 * 8);
+    mem.Put32(unit + 0x5C, list);
+    mem.Put32(list + 0x3C, other_sub);
+    mem.Put32(other_sub + 0x14, 8);  // outro estado
+    mem.Put32(other_sub + 0x2C, sub);
+    mem.Put32(sub + 0x14, 105);
+    mem.Put32(sub + 0x24, pairs);
+    mem.Put16(sub + 0x28, 2);
+    mem.Put32(pairs + 0x00, 7u << 16);
+    mem.PutI(pairs + 0x04, 99);
+    mem.Put32(pairs + 0x08, 172u << 16);
+    mem.PutI(pairs + 0x0C, value);
+  }
   uint32_t NewRoom2(uint32_t of_level, int32_t x, int32_t y, int32_t w, int32_t h,
                     uint32_t flags, uint32_t room1_ptr) {
     const uint32_t r = mem.Alloc(0xEC);
@@ -630,13 +808,16 @@ struct World {
   void MonStats(uint32_t cls, uint32_t flags) {
     mem.Put32(monstats + cls * 0x1A8 + 0x0C, flags);
   }
-  void ObjectRecord(uint32_t cls, uint8_t sub_class) {
+  void ObjectRecord(uint32_t cls, uint8_t sub_class, uint8_t operate_fn = 0) {
     mem.Put8(objects + cls * 0x1C0 + 0x167, sub_class);
+    mem.Put8(objects + cls * 0x1C0 + 0x1B3, operate_fn);
   }
-  void Ally(uint32_t id, uint32_t owner) {  // no inicio da lista, como um no novo
+  // No inicio da lista, como um no novo.
+  void Ally(uint32_t id, uint32_t owner, int32_t type = 7) {
     const uint32_t node = mem.Alloc(0x34);
     uint32_t head = 0;
     mem.Read(addr.ally_list, &head, 4);
+    mem.PutI(node + 0x04, type);
     mem.Put32(node + 0x08, id);
     mem.Put32(node + 0x0C, owner);
     mem.Put32(node + 0x30, head);
@@ -682,6 +863,7 @@ struct World {
     addr.automap_divisor = globals + 48;
     addr.automap_offset_x = globals + 52;
     addr.automap_offset_y = globals + 56;
+    addr.unit_alignment = 0x6259B0;  // so a presenca importa: o mod nao chama
     addr.ui_state = mem.Alloc(0x26 * 4);
     objects = mem.Alloc(573 * 0x1C0);
     mem.Put32(addr.objects_base, objects);
@@ -709,22 +891,29 @@ struct World {
 
     drlg_act = mem.Alloc(0x480);
     level = mem.Alloc(0x230);
+    mem.Put32(level + 0x00, 3);  // nivel externo
     mem.Put32(level + 0x1B4, drlg_act);
     mem.PutI(level + 0x1D0, 2);
     town = mem.Alloc(0x230);
     mem.Put32(town + 0x1B4, drlg_act);
     mem.PutI(town + 0x1D0, 1);
 
-    room1 = mem.Alloc(0x80);
-    town_room1 = mem.Alloc(0x80);
     act = mem.Alloc(0x50);
     mem.Put32(addr.current_act, act);
+    mem.Put32(act + 0x0C, 0x6C838D4A);  // semente
+    mem.PutI(act + 0x14, 0);            // Ato I
+    mem.Put32(act + 0x48, drlg_act);
+    mem.Put32(drlg_act + 0x46C, act);
+    room1 = mem.Alloc(0x80);
+    mem.Put32(room1 + 0x2C, act);
+    town_room1 = mem.Alloc(0x80);
+    mem.Put32(town_room1 + 0x2C, act);
 
     // Jogador (tipo 0) parado numa sala do nivel 2.
     player = mem.Alloc(0xF4);
     const uint32_t path = mem.Alloc(0x40);
     mem.Put32(player + 0x0C, 1);  // id do jogador
-    mem.Put32(player + 0x18, 1);  // Ato II
+    mem.Put32(player + 0x18, 0);  // Ato I
     mem.Put32(player + 0x2C, path);
     mem.Put16(path + 0x02, 5653);
     mem.Put16(path + 0x06, 5523);
@@ -748,7 +937,7 @@ void TestScanWorld() {
   // indices sem warp, que so marcam vinculo com nivel aberto.
   const uint32_t ra = w.NewRoom2(w.level, 1120, 1120, 8, 8, 0x230, w.room1);
   w.mem.Put32(w.room1 + 0x10, ra);
-  // Sala da cidade ao norte (outro nivel): borda y = 1120, x 1120..1128.
+  // Sala da cidade ao norte (outro nivel), encostada na sala atual.
   const uint32_t rt = w.NewRoom2(w.town, 1120, 1112, 8, 8, 0x10, w.town_room1);
   w.mem.Put32(w.town_room1 + 0x10, rt);
   // Sala nao carregada com o warp 6 (bit 0x400): posicao aproximada.
@@ -757,6 +946,7 @@ void TestScanWorld() {
   const uint32_t cave = w.mem.Alloc(0x230);
   w.mem.PutI(cave + 0x1D0, 8);
   const uint32_t rcave = w.NewRoom2(cave, 1112, 1120, 8, 8, 0, 0);
+  // A vizinhanca das salas nao faz passagem: da a fronteira, nao o caminho.
   w.Neighbors(ra, {ra, rt, rb, rcave});
   w.Neighbors(rt, {ra});
   w.Link(ra);
@@ -777,6 +967,15 @@ void TestScanWorld() {
   w.ObjectRecord(60, 0x04);
   w.ObjectRecord(298, 0x10);
   w.ObjectRecord(267, 0x08);
+  // Objetivos: pelo OperateFn, sem lista de classes. As pedras ficam lado a lado.
+  w.ObjectRecord(17, 0x00, 9);
+  w.ObjectRecord(18, 0x00, 9);
+  w.ObjectRecord(30, 0x00, 12);
+  w.ObjectRecord(460, 0x00, 0);
+  w.ObjectRecord(558, 0x00, 67);
+  w.ObjectRecord(473, 0x00, 0);
+  w.ObjectRecord(474, 0x00, 62);  // estatua: codigo de quest, nao e objetivo
+  w.ObjectRecord(268, 0x08, 33);  // bau ligado a missao, nao e objetivo
 
   // Predefinidas da sala carregada: a saida (tipo 5, lvlwarp 2 = Warp[5]), um
   // waypoint (objeto 119), um bau (267, nao marcado), um objeto da configuracao
@@ -787,6 +986,19 @@ void TestScanWorld() {
   w.Preset(ra, 2, 500, 35, 5);
   w.Preset(ra, 2, 9000, 36, 5);
   w.Preset(ra, 1, 5, 1, 1);
+  // Objetivos pela predefinida.
+  w.Preset(ra, 2, 17, 2, 30);
+  w.Preset(ra, 2, 18, 3, 30);
+  w.Preset(ra, 2, 30, 8, 30);
+  w.Preset(ra, 2, 460, 14, 30);
+  w.Preset(ra, 2, 473, 20, 30);
+  w.Preset(ra, 2, 474, 26, 30);
+  w.Preset(ra, 2, 268, 32, 30);
+  w.Preset(ra, 2, 580, 38, 30);  // classe fora da tabela (L sec. 4.3): vale so a coluna
+  w.mem.Put32(w.addr.objects_count, 573);
+  const Point stone = SubtileToClient(1120 * 5 + 2, 1120 * 5 + 30);
+  const Point tree = SubtileToClient(1120 * 5 + 8, 1120 * 5 + 30);
+  const Point placeholder = SubtileToClient(1120 * 5 + 14, 1120 * 5 + 30);
 
   // Monstats: hostis, NPC e ambiente; o mercenario passa nos bits de hostil.
   w.MonStats(5, 0x02418803);
@@ -813,16 +1025,36 @@ void TestScanWorld() {
   w.Ally(0x13, 1);
   w.Ally(0x20, 9);
   w.Ally(0x21, 1);
+  // Alinhamento: os aliados e a classe 359 dao 2, mas so os aliados tem no na lista.
+  w.MonStats(159, 0x02018408);
+  const uint32_t iw = w.Monster(159, 1, 0x00, w.room1, 190, 290, 0x30);
+  w.Align(iw, 2);
+  const uint32_t iw_dead = w.Monster(159, 12, 0x00, w.room1, 191, 291, 0x31);
+  w.Align(iw_dead, 2);
+  // Com 0x400 e sem o estado: hostil, porque o alinhamento e conhecido.
+  w.Monster(159, 1, 0x00, w.room1, 192, 292, 0x32);
+  const uint32_t ally_valk = w.Monster(180, 1, 0x00, w.room1, 193, 293, 0x33);
+  w.Align(ally_valk, 2);
+  w.Ally(0x33, 1, 2);
   // A unidade do waypoint coincide com a predefinida (cy 8 maior: centro do
   // subtile); um segundo waypoint so existe como unidade, de outra classe.
   const Point wp = SubtileToClient(1120 * 5 + 20, 1120 * 5 + 5);
-  w.StaticUnit(2, 119, w.room1, wp.x, wp.y + 8);
+  // Waypoint aberto (modo 2): modo != 0 so quer dizer "usado" num objetivo.
+  const uint32_t wp_unit = w.StaticUnit(2, 119, w.room1, wp.x, wp.y + 8);
+  w.mem.Put32(wp_unit + 0x10, 2);
   w.StaticUnit(2, 156, w.room1, 5000, 9000);
   w.StaticUnit(2, 267, w.room1, 5200, 9000);  // bau: nao marca
   // Portais: azul e vermelho com destino; o da classe 298 tem destino 0.
   w.ObjectUnit(59, w.room1, 6000, 9000, 1);
   w.ObjectUnit(60, w.room1, 6200, 9000, 125);
   w.ObjectUnit(298, w.room1, 6400, 9000, 0);
+  // Objetivos pela unidade: a arvore foi usada; a 558 cai na predefinida 460; a
+  // gaiola fica como estava.
+  const Point tree_unit = SubtileToClient(1120 * 5 + 8, 1120 * 5 + 30);
+  const uint32_t tree_obj = w.ObjectUnit(30, w.room1, tree_unit.x, tree_unit.y + 8, 0);
+  w.mem.Put32(tree_obj + 0x10, 1);
+  const uint32_t anya = w.ObjectUnit(558, w.room1, placeholder.x, placeholder.y + 8, 0);
+  w.mem.Put32(anya + 0x10, 0);
   // Portal de outro nivel: some.
   w.ObjectUnit(59, w.town_room1, 6600, 9000, 3);
   // Cinco tiles de saida na mesma posicao (como o jogo cria).
@@ -831,8 +1063,8 @@ void TestScanWorld() {
   // O tile do outro lado do warp: nunca e saida deste nivel.
   w.StaticUnit(5, 7, w.town_room1, 7000, 7000);
 
-  // Retangulos dos niveis: o 3 (aberto, Vis[1]) toca o nivel 2 sem sala ligada;
-  // o 1 (aberto, Vis[0]) ja tem sala ligada e nao ganha aproximacao.
+  // Retangulos dos niveis: o 3 e o 1 (abertos, Vis[1] e Vis[0]) tocam o nivel 2. Sem
+  // sala carregada do outro lado, e sem variante para a regra, sao aproximados.
   w.LevelRect(w.level, 888, 1064, 96, 56);
   const uint32_t level3 = w.mem.Alloc(0x230);
   w.mem.PutI(level3 + 0x1D0, 3);
@@ -849,7 +1081,7 @@ void TestScanWorld() {
   ScanGame(w.mem, w.addr, options, &scan);
   CHECK(scan.in_game);
   CHECK_EQ(scan.level_id, 2);
-  CHECK_EQ(scan.act_index, 1);
+  CHECK_EQ(scan.act_index, 0);
   CHECK_EQ(scan.act, w.act);
   CHECK_EQ(scan.player_room, w.room1);
   CHECK(scan.links_ok);
@@ -857,14 +1089,16 @@ void TestScanWorld() {
   CHECK_EQ(scan.player_y, 5523);
   CHECK_EQ(scan.stats.rooms, 4u);
   CHECK_EQ(scan.stats.rooms_loaded, 1u);
-  CHECK_EQ(scan.stats.presets, 7u);
-  CHECK_EQ(scan.stats.monsters, 4u);
+  CHECK_EQ(scan.stats.presets, 15u);
+  CHECK_EQ(scan.stats.monsters, 5u);  // inclui a de 0x400 com alinhamento 0
   CHECK_EQ(scan.stats.minions, 1u);
   CHECK_EQ(scan.stats.champions, 1u);
   CHECK_EQ(scan.stats.uniques, 1u);
   CHECK_EQ(scan.stats.superuniques, 0u);
-  CHECK_EQ(scan.stats.allies, 3u);
-  CHECK_EQ(scan.stats.own_allies, 2u);
+  CHECK_EQ(scan.stats.allies, 4u);
+  CHECK_EQ(scan.stats.own_allies, 3u);
+  CHECK_EQ(scan.stats.friendly, 1u);
+  CHECK_EQ(scan.stats.alignment_unknown, 0u);
   CHECK_EQ(scan.stats.npcs, 1u);
   CHECK_EQ(scan.stats.waypoints, 2u);
   CHECK_EQ(scan.stats.waypoint_rooms, 0u);
@@ -872,11 +1106,30 @@ void TestScanWorld() {
   CHECK_EQ(scan.stats.portals_red, 1u);
   CHECK_EQ(scan.stats.portals_other, 1u);
   CHECK_EQ(scan.stats.objects, 2u);
+  CHECK_EQ(scan.stats.quests, 5u);  // 17, 18, 30, 460/558 e 473
+  CHECK_EQ(scan.stats.quests_used, 1u);
   CHECK_EQ(scan.stats.exits, 2u);
   CHECK_EQ(scan.stats.exit_rooms, 2u);
-  CHECK_EQ(scan.stats.passages, 1u);
-  CHECK_EQ(scan.stats.passages_approx, 1u);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 2u);
   CHECK_EQ(scan.stats.passage_levels, 2u);
+  // Objetivos: marcas separadas por classe, predefinida e unidade na mesma marca.
+  const Mark* stone_mark = FindMark(scan, MarkKind::kQuest, 17);
+  CHECK(stone_mark != nullptr && stone_mark->x[0] == stone.x && stone_mark->operate_fn == 9);
+  CHECK(FindMark(scan, MarkKind::kQuest, 18) != nullptr);
+  const Mark* tree_mark = FindMark(scan, MarkKind::kQuest, 30);
+  CHECK(tree_mark != nullptr && tree_mark->used && tree_mark->x[0] == tree.x);
+  const Mark* anya_mark = FindMark(scan, MarkKind::kQuest, 558);
+  CHECK(anya_mark != nullptr && !anya_mark->used && anya_mark->operate_fn == 67 &&
+        anya_mark->x[0] == placeholder.x);
+  CHECK(FindMark(scan, MarkKind::kQuest, 460) == nullptr);
+  const Mark* cage_mark = FindMark(scan, MarkKind::kQuest, 473);
+  CHECK(cage_mark != nullptr && !cage_mark->used);
+  CHECK(FindMark(scan, MarkKind::kQuest, 474) == nullptr);
+  CHECK(FindMark(scan, MarkKind::kQuest, 268) == nullptr);
+  // Amigos: a classe 159 faz o papel da 359 aqui.
+  const Mark* friend_mark = FindMark(scan, MarkKind::kFriendly, 159);
+  CHECK(friend_mark != nullptr && friend_mark->x[0] == 190);
   CHECK(FindMark(scan, MarkKind::kWaypoint, 119) != nullptr);
   CHECK(FindMark(scan, MarkKind::kWaypoint, 156) != nullptr);
   CHECK(FindMark(scan, MarkKind::kObject, 267) == nullptr);
@@ -893,7 +1146,10 @@ void TestScanWorld() {
   int own = 0;
   for (const Mark& m : scan.marks) {
     if (m.kind == MarkKind::kAlly && m.own) ++own;
-    if (m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion) CHECK(m.unit_class == 5);
+    if (m.kind == MarkKind::kAlly && m.x[0] == 193) CHECK_EQ(m.ally_type, 2);
+    if (m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion) {
+      CHECK(m.unit_class == 5 || (m.unit_class == 159 && m.x[0] == 192));
+    }
     if (m.kind == MarkKind::kExit && m.warp_class == 2) {
       CHECK_EQ(m.dest_level, 8);
       CHECK_EQ(m.x[0], exit.x);
@@ -909,14 +1165,7 @@ void TestScanWorld() {
       CHECK_EQ(m.x[0], TileToClient(1128, 1120).x);
       CHECK_EQ(m.y[2], TileToClient(1136, 1128).y);
     }
-    if (m.kind == MarkKind::kPassage) {
-      CHECK_EQ(m.dest_level, 1);
-      CHECK(m.primary);
-      CHECK_EQ(m.x[0], TileToClient(1120, 1120).x);
-      CHECK_EQ(m.x[1], TileToClient(1128, 1120).x);
-    }
-    if (m.kind == MarkKind::kPassageApprox) {  // spec L sec. 4.1: x = 984, y 1080..1120
-      CHECK_EQ(m.dest_level, 3);
+    if (m.kind == MarkKind::kPassageApprox && m.dest_level == 3) {  // x = 984, y 1080..1120
       CHECK(m.primary);
       CHECK_EQ(m.x[0], TileToClient(984, 1080).x);
       CHECK_EQ(m.y[0], TileToClient(984, 1080).y);
@@ -924,7 +1173,7 @@ void TestScanWorld() {
       CHECK_EQ(m.y[1], TileToClient(984, 1120).y);
     }
   }
-  CHECK_EQ(own, 2);
+  CHECK_EQ(own, 3);
 
   // Salas para revelar: so a dos warps 6 e 3 (sem posicao exata e nao carregadas).
   std::vector<uint32_t> done;
@@ -952,6 +1201,84 @@ void TestScanWorld() {
   CHECK(next != nullptr && next->room == rc);
   w.mem.Put32(rb + 0x5C, 0);
 
+  // Sem o simbolo do alinhamento a varredura nao olha os stats: recusa 0x400.
+  GameAddresses no_alignment = w.addr;
+  no_alignment.unit_alignment = 0;
+  ScanGame(w.mem, no_alignment, options, &scan);
+  CHECK_EQ(scan.stats.monsters, 4u);
+  CHECK_EQ(scan.stats.friendly, 2u);  // 0x30 e 0x32, ambas com 0x400
+  CHECK_EQ(scan.stats.allies, 4u);
+  // Stats ilegiveis com o simbolo presente: registra e cai na mesma recusa.
+  w.mem.Put32(iw + 0x5C, 0xDEAD0000);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK(scan.stats.alignment_unknown >= 1u);
+  CHECK_EQ(scan.stats.friendly, 1u);
+  int32_t alignment = -1;
+  CHECK(!ReadUnitAlignment(w.mem, iw, &alignment));
+  w.Align(iw, 2);
+  CHECK(ReadUnitAlignment(w.mem, iw, &alignment));
+  CHECK_EQ(alignment, 2);
+  CHECK(ReadUnitAlignment(w.mem, ally_valk, &alignment));
+  CHECK_EQ(alignment, 2);
+  CHECK(ReadUnitAlignment(w.mem, tree_obj, &alignment));  // sem stats: 0
+  CHECK_EQ(alignment, 0);
+  w.Align(iw, 1);  // nunca visto vivo: fica hostil, como na spec
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.friendly, 0u);
+  CHECK_EQ(scan.stats.monsters, 6u);
+  w.Align(iw, 2);
+
+  // Objeto usado continua usado com a unidade fora da tabela, enquanto o mapa for o
+  // mesmo. A 558 e a predefinida 460 contam como um so objeto.
+  ScanOptions with_memo = options;
+  ScanMemo used_memo;
+  with_memo.memo = &used_memo;
+  w.mem.Put32(anya + 0x10, 2);
+  ScanGame(w.mem, w.addr, with_memo, &scan);
+  CHECK_EQ(scan.stats.quests_used, 2u);
+  w.mem.Put32(tree_obj + 0x10, 0);
+  w.mem.Put32(anya + 0x10, 0);
+  ScanGame(w.mem, w.addr, with_memo, &scan);
+  CHECK_EQ(scan.stats.quests_used, 2u);
+  const Mark* kept_tree = FindMark(scan, MarkKind::kQuest, 30);
+  CHECK(kept_tree != nullptr && kept_tree->used);
+  GameAddresses presets_only = w.addr;
+  presets_only.server_units = 0;
+  ScanGame(w.mem, presets_only, with_memo, &scan);
+  const Mark* kept_placeholder = FindMark(scan, MarkKind::kQuest, 460);
+  CHECK(kept_placeholder != nullptr && kept_placeholder->used);
+  CHECK_EQ(scan.stats.quests_used, 2u);
+  // Sem a memoria, o modo 0 nao marca nada, e o mod nao diz que esta pendente.
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.quests_used, 0u);
+  w.mem.Put32(w.act + 0x0C, 0x5A5A1234);  // outro mapa
+  ScanGame(w.mem, w.addr, with_memo, &scan);
+  CHECK_EQ(scan.stats.quests_used, 0u);
+  CHECK(used_memo.used_quests.empty());
+  w.mem.Put32(w.act + 0x0C, 0x6C838D4A);
+  w.mem.Put32(tree_obj + 0x10, 1);
+
+  // Objetivos desligados; rotulo manual; classe escondida.
+  ScanOptions adjusted = options;
+  adjusted.quests = false;
+  ScanGame(w.mem, w.addr, adjusted, &scan);
+  CHECK_EQ(scan.stats.quests, 0u);
+  CHECK_EQ(scan.stats.waypoints, 2u);
+  adjusted.quests = true;
+  adjusted.objects = false;
+  ScanGame(w.mem, w.addr, adjusted, &scan);
+  CHECK_EQ(scan.stats.quests, 5u);
+  CHECK_EQ(scan.stats.waypoints, 0u);
+  CHECK_EQ(scan.stats.objects, 0u);
+  adjusted.objects = true;
+  adjusted.objects_to_mark.push_back(ObjectLabel{30, "Arvore"});
+  adjusted.objects_to_mark.push_back(ObjectLabel{473, kHideObjectLabel});
+  ScanGame(w.mem, w.addr, adjusted, &scan);
+  CHECK_EQ(scan.stats.quests, 4u);
+  CHECK(FindMark(scan, MarkKind::kQuest, 473) == nullptr);
+  const Mark* labeled = FindMark(scan, MarkKind::kQuest, 30);
+  CHECK(labeled != nullptr && labeled->label == 2);
+
   // Sem as colunas de objects so a configuracao marca.
   GameAddresses no_objects = w.addr;
   no_objects.objects_base = 0;
@@ -968,26 +1295,36 @@ void TestScanWorld() {
   CHECK_EQ(scan.stats.waypoints, 2u);
   CHECK_EQ(scan.stats.objects, 2u);
 
-  // Sem a lista de aliados eles aparecem como hostis (o mod avisa no log).
+  // Sem a lista de aliados, os de alinhamento 2 viram amigos. Os aliados deste mundo
+  // sintetico sem o estado 105 viram hostis; no jogo eles vieram com alinhamento 2.
   GameAddresses no_allies = w.addr;
   no_allies.ally_list = 0;
   ScanGame(w.mem, no_allies, options, &scan);
   CHECK_EQ(scan.stats.allies, 0u);
-  CHECK_EQ(scan.stats.monsters, 7u);
+  CHECK_EQ(scan.stats.friendly, 2u);  // 0x30 e a valquiria
+  CHECK_EQ(scan.stats.monsters, 8u);
 
   // Aliados desligados na configuracao: nao marcam nem viram hostis.
   ScanOptions no_ally_marks = options;
   no_ally_marks.allies = false;
   ScanGame(w.mem, w.addr, no_ally_marks, &scan);
   CHECK_EQ(scan.stats.allies, 0u);
-  CHECK_EQ(scan.stats.monsters, 4u);
+  CHECK_EQ(scan.stats.monsters, 5u);
+
+  // Amigos saem com os NPCs.
+  ScanOptions no_npcs = options;
+  no_npcs.npcs = false;
+  ScanGame(w.mem, w.addr, no_npcs, &scan);
+  CHECK_EQ(scan.stats.friendly, 0u);
+  CHECK_EQ(scan.stats.npcs, 0u);
+  CHECK_EQ(scan.stats.monsters, 5u);
 
   // Com only_current_level = false o monstro da cidade tambem aparece (era
   // superunico), mas o tile do outro nivel continua fora.
   options.only_current_level = false;
   ScanGame(w.mem, w.addr, options, &scan);
   CHECK_EQ(scan.stats.superuniques, 1u);
-  CHECK_EQ(scan.stats.monsters, 5u);
+  CHECK_EQ(scan.stats.monsters, 6u);
   CHECK_EQ(scan.stats.portals_blue, 2u);
   CHECK_EQ(scan.stats.exits, 2u);
 
@@ -1079,6 +1416,219 @@ void TestScanWorld() {
   CHECK(!scan.in_game);
 }
 
+// Passagens abertas (spec de niveis sec. 4.1) e as protecoes de reveal_exits.
+void TestPassages() {
+  World w;
+  // Nivel 2 (888, 1064, 96, 56) e nivel 3 (984, 1080, 80, 80): trecho x = 984, y de
+  // 1080 a 1120, em subtiles x = 4920, y de 5400 a 5600. Nivel 1 nao encosta.
+  w.LevelRect(w.level, 888, 1064, 96, 56);
+  const uint32_t level3 = w.mem.Alloc(0x230);
+  w.mem.PutI(level3 + 0x1D0, 3);
+  w.LevelRect(level3, 984, 1080, 80, 80);
+  w.Chain(w.level);
+  w.Chain(level3);
+
+  // Quatro salas do nivel 2 na fronteira; a segunda e a da passagem (variante 3).
+  uint32_t own[4];
+  for (int32_t i = 0; i < 4; ++i) {
+    own[i] = w.NewRoom2(w.level, 976, 1088 + i * 8 - 8, 8, 8, 0, 0);
+    w.Variant(own[i], i == 1 ? 3 : i % 3);
+    w.Link(own[i]);
+  }
+  w.mem.Put32(w.room1 + 0x10, own[0]);
+  w.mem.Put32(own[0] + 0x30, w.room1);
+
+  ScanOptions options;
+  options.exits = true;
+  Scan scan;
+  // Sem sala do outro lado: regra do Ato I, sem ativar nada. A sala em y = 1088 da
+  // [5440 + 7, 5440 + 35) em subtiles.
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 1u);
+  CHECK_EQ(scan.stats.passages_rule, 1u);
+  CHECK_EQ(scan.stats.passages_approx, 0u);
+  CHECK_EQ(scan.stats.passage_levels, 1u);
+  const Mark* rule = FindMark(scan, MarkKind::kPassage);
+  CHECK(rule != nullptr);
+  if (rule != nullptr) {
+    CHECK(rule->source == PassageSource::kAct1Rule);
+    CHECK(rule->primary);
+    CHECK_EQ(rule->dest_level, 3);
+    const Point a = ClientToSubtile(rule->x[0], rule->y[0]);
+    const Point b = ClientToSubtile(rule->x[1], rule->y[1]);
+    CHECK_EQ(a.x, 4920);
+    CHECK_EQ(a.y, 5447);
+    CHECK_EQ(b.x, 4920);
+    CHECK_EQ(b.y, 5475);
+  }
+
+  // Duas salas de variante >= 3: a regra pede exatamente uma; fica aproximado.
+  w.Variant(own[3], 4);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 1u);
+  const Mark* approx = FindMark(scan, MarkKind::kPassageApprox);
+  CHECK(approx != nullptr && approx->primary && approx->dest_level == 3);
+  w.Variant(own[3], 0);
+
+  // Nenhuma de variante >= 3: aproximado.
+  w.Variant(own[1], 2);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 1u);
+  w.Variant(own[1], 3);
+
+  // Fora do Ato I a regra nao vale, nem com variante 3.
+  const uint32_t player_path_act = w.player + 0x18;
+  w.mem.Put32(player_path_act, 1);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages_rule, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 1u);
+  w.mem.Put32(player_path_act, 0);
+
+  // Nivel que nao e externo: idem.
+  w.mem.Put32(w.level + 0x00, 2);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages_rule, 0u);
+  w.mem.Put32(w.level + 0x00, 3);
+
+  // Sala carregada dos dois lados: vale a colisao, em qualquer ato. Sala do nivel 2
+  // (976, 1088) e a do nivel 3 (984, 1088), com y livre so em 5450..5459 e 5470..5477,
+  // e uma fresta de 2 celulas em 5465 que nao conta.
+  const uint32_t own_room1 = w.NewRoom1(976 * 5, 1088 * 5, 40, 40);
+  w.mem.Put32(own[1] + 0x30, own_room1);
+  w.mem.Put32(own_room1 + 0x10, own[1]);
+  const uint32_t far_room1 = w.NewRoom1(984 * 5, 1088 * 5, 40, 40);
+  const uint32_t far_room = w.NewRoom2(level3, 984, 1088, 8, 8, 0, far_room1);
+  w.LinkOther(level3, far_room);
+  // Bloqueia do lado do nivel 2 ate 5450; do outro, o resto.
+  w.Block(own_room1, 4919, 5440, 4920, 5450);
+  w.Block(far_room1, 4920, 5460, 4921, 5465);
+  w.Block(far_room1, 4920, 5467, 4921, 5470);
+  w.Block(far_room1, 4920, 5478, 4921, 5480);
+  ScanMemo memo;
+  options.memo = &memo;
+  w.mem.Put32(player_path_act, 1);  // Ato II: so a colisao
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 2u);
+  CHECK_EQ(scan.stats.passages_rule, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 0u);
+  CHECK_EQ(scan.stats.passage_levels, 1u);
+  std::vector<Point> ends;
+  int primaries = 0;
+  for (const Mark& m : scan.marks) {
+    if (m.kind != MarkKind::kPassage) continue;
+    CHECK(m.source == PassageSource::kCollision);
+    if (m.primary) ++primaries;
+    ends.push_back(ClientToSubtile(m.x[0], m.y[0]));
+    ends.push_back(ClientToSubtile(m.x[1], m.y[1]));
+  }
+  CHECK_EQ(primaries, 1);
+  CHECK_EQ(ends.size(), 4u);
+  if (ends.size() == 4) {
+    CHECK_EQ(ends[0].x, 4920);
+    CHECK_EQ(ends[0].y, 5450);
+    CHECK_EQ(ends[1].y, 5460);
+    CHECK_EQ(ends[2].y, 5470);
+    CHECK_EQ(ends[3].y, 5478);
+  }
+  CHECK_EQ(memo.passages.size(), 1u);
+
+  // Sem colisao (so para conferir a regra no condutor): cai na regra no Ato I.
+  w.mem.Put32(player_path_act, 0);
+  ScanOptions rule_only = options;
+  rule_only.passage_collision = false;
+  rule_only.memo = nullptr;
+  ScanGame(w.mem, w.addr, rule_only, &scan);
+  CHECK_EQ(scan.stats.passages_rule, 1u);
+
+  // A sala do outro lado descarrega: a passagem ja calculada fica.
+  w.mem.Put32(far_room + 0x30, 0);
+  w.mem.Put32(player_path_act, 1);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 2u);
+  const Mark* kept = FindMark(scan, MarkKind::kPassage);
+  CHECK(kept != nullptr && kept->source == PassageSource::kCollision);
+  // Sem memo, volta ao trecho comum (Ato II), nunca a uma linha exata.
+  ScanOptions no_memo = options;
+  no_memo.memo = nullptr;
+  ScanGame(w.mem, w.addr, no_memo, &scan);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 1u);
+  // Outro mapa: a memoria nao vale mais.
+  w.mem.Put32(w.act + 0x0C, 0x5A5A1234);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK(memo.passages.empty());
+  w.mem.Put32(player_path_act, 0);
+
+  // Lado carregado so de um lado, com o outro nivel sem salas: nunca e exato pela
+  // colisao; aqui, a regra do Ato I.
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages_rule, 1u);
+
+  // Mesma fronteira entre niveis sem Vis aberto: Warp[n] != -1 nao faz passagem.
+  const uint32_t record = w.level_defs_record;
+  w.mem.PutI(record + 0x68 + 4, 5);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.passages, 0u);
+  CHECK_EQ(scan.stats.passages_approx, 0u);
+  w.mem.PutI(record + 0x68 + 4, -1);
+
+  // Protecoes de reveal_exits (L sec. 3.1).
+  ScanGame(w.mem, w.addr, options, &scan);
+  w.mem.Put32(w.room1 + 0x10, own[1]);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK(scan.stats.rooms_loaded >= 1u);
+  CHECK(RevealBlockReason(w.mem, scan) == nullptr);
+  // Fora da partida.
+  Scan empty;
+  CHECK(RevealBlockReason(w.mem, empty) != nullptr);
+  // Nivel sem sala ativa.
+  Scan no_rooms = scan;
+  no_rooms.stats.rooms_loaded = 0;
+  CHECK(RevealBlockReason(w.mem, no_rooms) != nullptr);
+  // Sala do jogador de outro ato (troca de ato em andamento).
+  w.mem.Put32(w.room1 + 0x2C, 0x12345678);
+  CHECK(RevealBlockReason(w.mem, scan) != nullptr);
+  w.mem.Put32(w.room1 + 0x2C, w.act);
+  // Ato do cliente diferente do jogador.
+  w.mem.PutI(w.act + 0x14, 1);
+  CHECK(RevealBlockReason(w.mem, scan) != nullptr);
+  w.mem.PutI(w.act + 0x14, 0);
+  // Nivel de outro ato pelo id.
+  Scan wrong_level = scan;
+  wrong_level.level_id = 40;
+  CHECK(RevealBlockReason(w.mem, wrong_level) != nullptr);
+  // DrlgAct que nao volta ao ato.
+  w.mem.Put32(w.drlg_act + 0x46C, 0x12345678);
+  CHECK(RevealBlockReason(w.mem, scan) != nullptr);
+  w.mem.Put32(w.drlg_act + 0x46C, w.act);
+  // Nivel fora da corrente do ato.
+  w.mem.Put32(w.drlg_act + 0x47C, 0);
+  CHECK(RevealBlockReason(w.mem, scan) != nullptr);
+  w.mem.Put32(w.drlg_act + 0x47C, w.level);
+  CHECK(RevealBlockReason(w.mem, scan) == nullptr);
+
+  // Warp que levaria a outro ato: a sala nao e escolhida (a ligacao geraria o destino).
+  Scan warp_scan = scan;
+  WarpRoom near_room;
+  near_room.room = 0x1000;
+  near_room.n = 3;
+  WarpRoom cross_act = near_room;
+  cross_act.room = 0x2000;
+  cross_act.n = 4;
+  warp_scan.vis[3] = 40;
+  warp_scan.warp[3] = 9;
+  warp_scan.vis[4] = 8;
+  warp_scan.warp[4] = 10;
+  warp_scan.warp_rooms = {near_room, cross_act};
+  const WarpRoom* pick = NextRoomToReveal(warp_scan, {});
+  CHECK(pick != nullptr && pick->room == 0x2000);
+  warp_scan.warp_rooms = {near_room};
+  CHECK(NextRoomToReveal(warp_scan, {}) == nullptr);
+}
+
 void TestCorruptedMemory() {
   World w;
   const uint32_t ra = w.NewRoom2(w.level, 0, 0, 8, 8, 0, w.room1);
@@ -1097,6 +1647,16 @@ void TestCorruptedMemory() {
   w.mem.Put32(w.addr.ally_list, node);
   // Tabela de objects em endereco invalido.
   w.mem.Put32(w.addr.objects_base, 0xDEAD0000);
+  // Colisao em endereco invalido e dimensoes absurdas numa sala de borda.
+  w.mem.Put32(w.room1 + 0x20, 0xDEAD0000);
+  // Ciclo na lista de sub-listas de stats.
+  const uint32_t list = w.mem.Alloc(0x40);
+  const uint32_t sub = w.mem.Alloc(0x30);
+  w.mem.Put32(list + 0x3C, sub);
+  w.mem.Put32(sub + 0x2C, sub);
+  w.mem.Put32(m + 0x5C, list);
+  int32_t alignment = 0;
+  CHECK(!ReadUnitAlignment(w.mem, m, &alignment));
   w.Preset(ra, 2, 119, 1, 1);
   w.StaticUnit(2, 119, w.room1, 0, 0);
   ScanOptions options;
@@ -1107,6 +1667,8 @@ void TestCorruptedMemory() {
   CHECK_EQ(scan.stats.passages, 0u);
   CHECK_EQ(scan.stats.monsters, 4096u);
   CHECK_EQ(scan.stats.waypoints, 0u);
+  CHECK_EQ(scan.stats.quests, 0u);
+  CHECK_EQ(scan.stats.alignment_unknown, 4096u);
 }
 
 }  // namespace
@@ -1118,6 +1680,7 @@ int main() {
   TestPanels();
   TestGeometry();
   TestScanWorld();
+  TestPassages();
   TestCorruptedMemory();
   if (g_failures == 0) {
     std::printf("map_logic_test: tudo passou\n");

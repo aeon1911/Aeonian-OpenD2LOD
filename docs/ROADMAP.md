@@ -61,19 +61,18 @@ finalizada**. Todos dependem do M2.2.
 
 | # | Funcionalidade | Depende de | Observações |
 |---|---|---|---|
-| C1 | **Mapa: marcar onde ficam a entrada e a saída** (portas/escadas/waypoints) da área | níveis + objetos/saídas; desenho no automap (M2.1 `on_present`) | 🟡 **feito nos Atos I–V** pelo mod `map-overlay` ([`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): warps (exatos ou pela sala), bordas com outros níveis (exatas ou aproximadas), waypoints e portais sem configuração; tela cheia e minimapa; GDI nas três dificuldades, D2GL em Normal |
-| C2 | **Mapa: mostrar todos os inimigos** | lista de unidades-monstro do jogador atual | 🟡 **feito** pelo mesmo mod: monstros vivos das salas carregadas, com lacaio, campeão, único e superúnico; NPCs e aliados à parte; falso positivo conhecido na cidade do Ato III (classe 359); no modo multijogador/online não se aplica |
+| C1 | **Mapa: marcar onde ficam a entrada e a saída** (portas/escadas/waypoints) da área | níveis + objetos/saídas; desenho no automap (M2.1 `on_present`) | 🟡 **feito nos Atos I–V** pelo mod `map-overlay` ([`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): warps (exatos ou pela sala), passagens abertas (exatas pela colisão ou pela regra do Ato I, aproximadas e rotuladas nos demais casos), waypoints, portais e **objetivos de quest** sem configuração; tela cheia e minimapa; GDI nas três dificuldades, D2GL em Normal |
+| C2 | **Mapa: mostrar todos os inimigos** | lista de unidades-monstro do jogador atual | 🟡 **feito** pelo mesmo mod: monstros vivos das salas carregadas, com lacaio, campeão, único e superúnico; NPCs, aliados e amigos à parte, com o filtro de alinhamento da spec (classe 359 deixou de ser hostil); no modo multijogador/online não se aplica |
 | C3 | **Planejador de builds**: salvar builds e **aplicá-las a personagens novos** | personagem (atributos/habilidades) + criação de personagem + UI | formato próprio versionado (`builds/*.json`); aplicar = distribuir pontos conforme o plano a cada nível, via API do jogo (nada de editar saves) |
 | C4 | **Compatibilidade total com mods — Project Diablo 2 e Median XL** | suporte à base **1.13c** (ver abaixo) | **risco alto: ver a nota** |
 
 **C1/C2 — o que falta** (matriz e evidência em
-[`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): **objetivos de quest** ainda não têm
-detecção, só a configuração manual, porque o jogo não tem coluna para eles; a classe 359 na
-cidade do Ato III aparece como hostil; o destino dos portais 298 e 342 e a posição exata
-das passagens entre níveis externos seguem abertos. Faltam validar o D2GL em Pesadelo,
-Inferno, tela cheia e 640×480, e os demais tipos de aliado. Só o que o cliente já
-carregou aparece; a opção `reveal_exits`, desligada por padrão e experimental, chama
-`AddRoomData` para achar a posição exata dos warps antes de chegar perto.
+[`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): dos 24 valores de `OperateFn` de objetivo, 7 foram
+vistos em jogo com o mod, 4 só na análise e 13 só no binário e no censo; a Anya (558/460) não foi
+alcançada; o mod só sabe que um objeto foi **usado**, nunca que a missão está pendente. A passagem exata
+sem chegar perto só existe nas bordas medidas do Ato I. Faltam validar o D2GL em Pesadelo, Inferno, tela
+cheia e 640×480. Só o que o cliente já carregou aparece; a opção `reveal_exits`, desligada por padrão e
+experimental, chama `AddRoomData` para achar a posição exata dos warps antes de chegar perto.
 
 > **Nota sobre C4 (decisão arquitetural pendente).** Project Diablo 2 e Median XL
 > são mods sobre o **Diablo II 1.13c** (várias DLLs: `D2Client.dll`, `D2Common.dll`,

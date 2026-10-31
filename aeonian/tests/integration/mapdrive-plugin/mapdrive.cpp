@@ -46,21 +46,31 @@
 //   walkmode <left|right>      botao dos passos de walk fora da cidade (right:
 //                              Teletransporte; na cidade o jogo nao o permite)
 //   walkpoint <dx> <dy> <ms>   anda ate (jogador inicial + dx, dy) em subtiles
+//   walkabs <x> <y> <ms>       anda ate (x, y) em subtiles; diz onde parou
 //   waitlevel <nivel> <ms>     espera o jogador estar no nivel
 //   waitui <indice> <ms>       espera a entrada de estado de UI ligar
-//   clickmark <tipo> <ui|-1> <ms>  anda ate a marca mais perto e clica nela ate a
-//                              entrada de UI ligar (-1: ate o nivel mudar). Tipos:
-//                              npc, wp, blue, red, exit
+//   clickmark <tipo> <ui|-1|-2> <ms>  anda ate a marca mais perto e clica nela ate a
+//                              entrada de UI ligar (-1: ate o nivel mudar; -2: ate a
+//                              marca ficar "usada"). Tipos: npc, wp, blue, red, exit,
+//                              quest
 //   hover <tipo>               poe o cursor sobre a marca mais perto (o jogo mostra
 //                              o rotulo no proximo quadro). Tipos acima e monster,
-//                              minion, champion, unique, super, ally, other
+//                              minion, champion, unique, super, ally, friendly, other
 //   goto <tipo> <ms>           anda ate a marca mais perto ficar na tela
 //   sweep <tipo|none> <ms>     percorre o retangulo do nivel ate ver uma marca do tipo
 //   report <etiqueta>          linha com todas as contagens da varredura
+//   align <etiqueta>           confere o alinhamento lido dos stats contra a funcao
+//                              do jogo, em todos os monstros da tabela (so aqui ela e
+//                              chamada; o mod nao chama)
+//   rulecheck <etiqueta>       regra do Ato I x colisao, por nivel vizinho
+//   nearpass <nivel> <subtiles> <ms>  anda ate a passagem (ou o trecho) para o nivel
+//   crossoff <nivel> <subtiles> <ms>  tenta cruzar a borda a pe, FORA da passagem
+//                              exata, a essa distancia da ponta dela
 //   log <texto>
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -111,6 +121,15 @@ int32_t g_entry_x = 0;
 int32_t g_entry_y = 0;
 bool g_walk_right = false;
 int32_t g_click_level = 0;
+
+// Estado do comando crossoff.
+int g_cross_phase = 0;
+int32_t g_cross_approach_x = 0;
+int32_t g_cross_approach_y = 0;
+int32_t g_cross_target_x = 0;
+int32_t g_cross_target_y = 0;
+int32_t g_cross_level = 0;
+DWORD g_cross_until = 0;
 
 // Estado do comando sweep: pontos do retangulo do nivel ainda nao visitados.
 struct SweepPoint {
@@ -230,8 +249,11 @@ bool InGame() {
          (map_overlay::ReadU32(g_mem, g_addr.current_act, &act) && act != 0);
 }
 
+map_overlay::ScanMemo g_memo;
+
 map_overlay::Scan ScanNow() {
   map_overlay::ScanOptions options;
+  options.memo = &g_memo;
   map_overlay::Scan scan;
   map_overlay::ScanGame(g_mem, g_addr, options, &scan);
   return scan;
@@ -292,7 +314,8 @@ bool WalkTarget(const map_overlay::Scan& scan, int32_t level, double* tx, double
     double y = m.y[0];
     if (m.kind == map_overlay::MarkKind::kPassage ||
         m.kind == map_overlay::MarkKind::kPassageApprox) {
-      // Ponto do segmento mais perto do jogador.
+      // Ponto do segmento mais perto do jogador, um pouco alem da fronteira: parar
+      // em cima da linha nao muda de nivel.
       const double sx = m.x[1] - m.x[0];
       const double sy = m.y[1] - m.y[0];
       const double l2 = sx * sx + sy * sy;
@@ -300,6 +323,18 @@ bool WalkTarget(const map_overlay::Scan& scan, int32_t level, double* tx, double
       t = t < 0.1 ? 0.1 : t > 0.9 ? 0.9 : t;
       x = m.x[0] + t * sx;
       y = m.y[0] + t * sy;
+      const map_overlay::Point a = map_overlay::ClientToSubtile(m.x[0], m.y[0]);
+      const map_overlay::Point b = map_overlay::ClientToSubtile(m.x[1], m.y[1]);
+      constexpr double kBeyond = 4.0;  // subtiles
+      if (a.x == b.x) {
+        const double dir = scan.player_x < a.x ? kBeyond : -kBeyond;
+        x += dir * 16.0;
+        y += dir * 8.0;
+      } else {
+        const double dir = scan.player_y < a.y ? kBeyond : -kBeyond;
+        x -= dir * 16.0;
+        y += dir * 8.0;
+      }
     } else if (m.kind == map_overlay::MarkKind::kExitRoom) {
       x = (m.x[0] + m.x[1] + m.x[2] + m.x[3]) / 4.0;
       y = (m.y[0] + m.y[1] + m.y[2] + m.y[3]) / 4.0;
@@ -327,7 +362,8 @@ bool MarkKindFromName(const std::string& name, map_overlay::MarkKind* kind) {
                      {"exit", MarkKind::kExit},         {"other", MarkKind::kPortalOther},
                      {"monster", MarkKind::kMonster},  {"minion", MarkKind::kMinion},
                      {"champion", MarkKind::kChampion}, {"unique", MarkKind::kUnique},
-                     {"super", MarkKind::kSuperUnique}, {"ally", MarkKind::kAlly}};
+                     {"super", MarkKind::kSuperUnique}, {"ally", MarkKind::kAlly},
+                     {"quest", MarkKind::kQuest},       {"friendly", MarkKind::kFriendly}};
   for (const auto& k : kinds) {
     if (name == k.name) {
       *kind = k.kind;
@@ -374,13 +410,14 @@ void Report(const char* tag) {
   map_overlay::ReadAutomapView(g_mem, g_addr, &view);
   Say(AEONIAN_LOG_INFO,
       "MAPDRIVE report %s: ato=%d nivel=%d salas=%u/%u monstros=%u lacaios=%u campeoes=%u "
-      "unicos=%u superunicos=%u aliados=%u/%u npcs=%u wp=%u wp_sala=%u azul=%u vermelho=%u "
-      "outros=%u objetos=%u saidas=%u salas_warp=%u bordas=%u aprox=%u lado=%d quadro=%dx%d",
+      "unicos=%u superunicos=%u aliados=%u/%u amigos=%u npcs=%u wp=%u wp_sala=%u azul=%u "
+      "vermelho=%u outros=%u objetivos=%u/%u objetos=%u saidas=%u salas_warp=%u bordas=%u "
+      "regra=%u aprox=%u lado=%d quadro=%dx%d",
       tag, scan.act_index + 1, scan.level_id, s.rooms_loaded, s.rooms, s.monsters, s.minions,
-      s.champions, s.uniques, s.superuniques, s.own_allies, s.allies, s.npcs, s.waypoints,
-      s.waypoint_rooms, s.portals_blue, s.portals_red, s.portals_other, s.objects, s.exits,
-      s.exit_rooms, s.passages, s.passages_approx, view.panel_side, view.frame_width,
-      view.frame_height);
+      s.champions, s.uniques, s.superuniques, s.own_allies, s.allies, s.friendly, s.npcs,
+      s.waypoints, s.waypoint_rooms, s.portals_blue, s.portals_red, s.portals_other, s.quests_used,
+      s.quests, s.objects, s.exits, s.exit_rooms, s.passages, s.passages_rule, s.passages_approx,
+      view.panel_side, view.frame_width, view.frame_height);
   for (const map_overlay::Mark& m : scan.marks) {
     using map_overlay::MarkKind;
     // Monstro hostil numa cidade e raro: a classe ajuda a conferir o filtro.
@@ -391,6 +428,7 @@ void Report(const char* tag) {
                        : m.kind == MarkKind::kUnique      ? "unico"
                        : m.kind == MarkKind::kSuperUnique ? "superunico"
                        : m.kind == MarkKind::kAlly        ? "aliado"
+                       : m.kind == MarkKind::kFriendly    ? "amigo"
                        : m.kind == MarkKind::kWaypoint    ? "waypoint"
                        : m.kind == MarkKind::kPortalBlue  ? "portal azul"
                        : m.kind == MarkKind::kPortalRed   ? "portal vermelho"
@@ -399,8 +437,101 @@ void Report(const char* tag) {
                        : m.kind == MarkKind::kExitRoom    ? "sala de warp"
                                                           : nullptr;
     if (what != nullptr) {
-      Say(AEONIAN_LOG_INFO, "MAPDRIVE   %s classe=%d destino=%d lvlwarp=%d", what, m.unit_class,
-          m.dest_level, m.warp_class);
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE   %s classe=%d destino=%d lvlwarp=%d tipo=%d", what,
+          m.unit_class, m.dest_level, m.warp_class, m.ally_type);
+    }
+    if (m.kind == MarkKind::kQuest) {
+      char name[64] = "?";
+      map_overlay::ReadObjectName(g_mem, g_addr, static_cast<uint32_t>(m.unit_class), name,
+                                  sizeof(name));
+      const map_overlay::Point at = map_overlay::ClientToSubtile(m.x[0], m.y[0]);
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE   objetivo classe=%d operate=%d usado=%d em (%d,%d) nome=%s",
+          m.unit_class, m.operate_fn, m.used ? 1 : 0, at.x, at.y, name);
+    }
+    if (m.kind == MarkKind::kPassage || m.kind == MarkKind::kPassageApprox) {
+      const map_overlay::Point a = map_overlay::ClientToSubtile(m.x[0], m.y[0]);
+      const map_overlay::Point b = map_overlay::ClientToSubtile(m.x[1], m.y[1]);
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE   passagem %s destino=%d (%d,%d)-(%d,%d) largura=%d",
+          m.kind == MarkKind::kPassageApprox                   ? "aproximada"
+          : m.source == map_overlay::PassageSource::kCollision ? "colisao"
+                                                               : "regra",
+          m.dest_level, a.x, a.y, b.x, b.y, std::abs(b.x - a.x) + std::abs(b.y - a.y));
+    }
+  }
+}
+
+// O alinhamento que o mod le da memoria x o que a funcao do jogo devolve, em todos os
+// monstros da tabela do servidor (U sec. 2, 7.2). Uma linha por classe e modo.
+void AlignCheck(const char* tag) {
+  using AlignmentFn = int32_t(__stdcall*)(uint32_t);
+  if (g_addr.unit_alignment == 0 || g_addr.server_units == 0) {
+    Say(AEONIAN_LOG_WARN, "MAPDRIVE align %s: simbolo ausente", tag);
+    return;
+  }
+  const AlignmentFn real =
+      reinterpret_cast<AlignmentFn>(static_cast<uintptr_t>(g_addr.unit_alignment));
+  uint32_t checked = 0;
+  uint32_t different = 0;
+  std::vector<uint64_t> seen;
+  for (uint32_t b = 0; b < 128; ++b) {
+    uint32_t unit = 0;
+    if (!map_overlay::ReadU32(g_mem, g_addr.server_units + 0x200 + 4 * b, &unit)) return;
+    for (uint32_t i = 0; unit != 0 && i < 4096; ++i) {
+      uint32_t cls = 0;
+      uint32_t mode = 0;
+      uint32_t next = 0;
+      int32_t from_memory = -1;
+      if (!map_overlay::ReadU32(g_mem, unit + 0x04, &cls) ||
+          !map_overlay::ReadU32(g_mem, unit + 0x10, &mode) ||
+          !map_overlay::ReadU32(g_mem, unit + 0xE4, &next)) {
+        break;
+      }
+      const bool readable = map_overlay::ReadUnitAlignment(g_mem, unit, &from_memory);
+      const int32_t from_game = real(unit);
+      ++checked;
+      if (!readable || from_memory != from_game) ++different;
+      const uint64_t key = (static_cast<uint64_t>(cls) << 32) | static_cast<uint32_t>(from_game);
+      if (std::find(seen.begin(), seen.end(), key) == seen.end()) {
+        seen.push_back(key);
+        Say(AEONIAN_LOG_INFO, "MAPDRIVE   alinhamento classe=%u modo=%u memoria=%d funcao=%d",
+            cls, mode, readable ? from_memory : -1, from_game);
+      }
+      unit = next;
+    }
+  }
+  Say(different == 0 ? AEONIAN_LOG_INFO : AEONIAN_LOG_ERROR,
+      "MAPDRIVE align %s: %u monstros conferidos, %u diferentes", tag, checked, different);
+}
+
+// Regra do Ato I (sem colisao) x colisao, para cada nivel vizinho.
+void RuleCheck(const char* tag) {
+  map_overlay::ScanOptions rule_options;
+  rule_options.passage_collision = false;
+  map_overlay::Scan rule;
+  map_overlay::ScanGame(g_mem, g_addr, rule_options, &rule);
+  map_overlay::ScanOptions collision_options;
+  map_overlay::Scan collision;
+  map_overlay::ScanGame(g_mem, g_addr, collision_options, &collision);
+  for (const map_overlay::Mark& m : rule.marks) {
+    using map_overlay::MarkKind;
+    if (m.kind != MarkKind::kPassage && m.kind != MarkKind::kPassageApprox) continue;
+    const map_overlay::Point a = map_overlay::ClientToSubtile(m.x[0], m.y[0]);
+    const map_overlay::Point b = map_overlay::ClientToSubtile(m.x[1], m.y[1]);
+    Say(AEONIAN_LOG_INFO, "MAPDRIVE rulecheck %s: nivel %d -> %d, sem ativar %s (%d,%d)-(%d,%d)",
+        tag, rule.level_id, m.dest_level, m.kind == MarkKind::kPassage ? "regra" : "aproximada",
+        a.x, a.y, b.x, b.y);
+    for (const map_overlay::Mark& c : collision.marks) {
+      if (c.kind != MarkKind::kPassage || c.dest_level != m.dest_level ||
+          c.source != map_overlay::PassageSource::kCollision) {
+        continue;
+      }
+      const map_overlay::Point ca = map_overlay::ClientToSubtile(c.x[0], c.y[0]);
+      const map_overlay::Point cb = map_overlay::ClientToSubtile(c.x[1], c.y[1]);
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE rulecheck %s:   colisao (%d,%d)-(%d,%d)%s", tag, ca.x, ca.y,
+          cb.x, cb.y,
+          m.kind == MarkKind::kPassage && ca.x == a.x && ca.y == a.y && cb.x == b.x && cb.y == b.y
+              ? " IGUAL"
+              : "");
     }
   }
 }
@@ -413,6 +544,7 @@ void Next() {
   g_walk_detour = 0;
   g_walk_last_x = -1;
   g_sweep_active = false;
+  g_cross_phase = 0;
 }
 
 // Executa o comando atual; devolve false enquanto ele ainda nao terminou.
@@ -471,6 +603,128 @@ bool Step(DWORD now) {
   if (c == "report") {
     Report(arg);
     return true;
+  }
+  if (c == "align") {
+    AlignCheck(arg);
+    return true;
+  }
+  if (c == "rulecheck") {
+    RuleCheck(arg);
+    return true;
+  }
+  if (c == "nearpass") {
+    long level = 0;
+    long within = 0;
+    long timeout = 0;
+    std::sscanf(arg, "%ld %ld %ld", &level, &within, &timeout);
+    if (g_deadline == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+    }
+    const map_overlay::Scan scan = ScanNow();
+    const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+    const map_overlay::Mark* best = nullptr;
+    double best_d = 0.0;
+    for (const map_overlay::Mark& m : scan.marks) {
+      if (m.dest_level != level || (m.kind != map_overlay::MarkKind::kPassage &&
+                                    m.kind != map_overlay::MarkKind::kPassageApprox)) {
+        continue;
+      }
+      const double d = std::hypot((m.x[0] + m.x[1]) / 2.0 - me.x, (m.y[0] + m.y[1]) / 2.0 - me.y);
+      if (best == nullptr || d < best_d) {
+        best = &m;
+        best_d = d;
+      }
+    }
+    if (best == nullptr || now >= g_deadline) {
+      Say(AEONIAN_LOG_WARN, "MAPDRIVE nearpass %ld: sem passagem ou prazo esgotado em (%d,%d)",
+          level, scan.player_x, scan.player_y);
+      return true;
+    }
+    const map_overlay::Point mid =
+        map_overlay::ClientToSubtile((best->x[0] + best->x[1]) / 2, (best->y[0] + best->y[1]) / 2);
+    const int32_t distance = std::abs(scan.player_x - mid.x) + std::abs(scan.player_y - mid.y);
+    if (distance <= within) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE nearpass %ld: em (%d,%d), a %d subtiles do meio (%d,%d)",
+          level, scan.player_x, scan.player_y, distance, mid.x, mid.y);
+      return true;
+    }
+    WalkStep(scan, (best->x[0] + best->x[1]) / 2.0 - me.x, (best->y[0] + best->y[1]) / 2.0 - me.y,
+             now);
+    return false;
+  }
+  if (c == "crossoff") {
+    long level = 0;
+    long offset = 0;
+    long timeout = 0;
+    std::sscanf(arg, "%ld %ld %ld", &level, &offset, &timeout);
+    const map_overlay::Scan scan = ScanNow();
+    if (g_cross_phase == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+      g_cross_level = scan.level_id;
+      const map_overlay::Mark* exact = nullptr;
+      for (const map_overlay::Mark& m : scan.marks) {
+        if (m.kind == map_overlay::MarkKind::kPassage && m.dest_level == level) exact = &m;
+      }
+      if (exact == nullptr) {
+        Say(AEONIAN_LOG_WARN, "MAPDRIVE crossoff %ld: sem passagem exata", level);
+        return true;
+      }
+      const map_overlay::Point a = map_overlay::ClientToSubtile(exact->x[0], exact->y[0]);
+      const map_overlay::Point b = map_overlay::ClientToSubtile(exact->x[1], exact->y[1]);
+      const bool vertical = a.x == b.x;
+      const int32_t edge = vertical ? a.x : a.y;
+      const int32_t end = vertical ? std::max(a.y, b.y) : std::max(a.x, b.x);
+      const int32_t start = vertical ? std::min(a.y, b.y) : std::min(a.x, b.x);
+      // O lado com mais fronteira do nivel; a ponta mais perto do meio do retangulo.
+      const map_overlay::TileRect& r = scan.level_rect;
+      const int32_t rect_mid = (vertical ? r.y * 2 + r.h : r.x * 2 + r.w) * 5 / 2;
+      const int32_t along = rect_mid >= (start + end) / 2 ? end + static_cast<int32_t>(offset)
+                                                          : start - static_cast<int32_t>(offset);
+      const int32_t side = (vertical ? scan.player_x : scan.player_y) < edge ? -1 : 1;
+      g_cross_approach_x = vertical ? edge + side * 14 : along;
+      g_cross_approach_y = vertical ? along : edge + side * 14;
+      g_cross_target_x = vertical ? edge - side * 8 : along;
+      g_cross_target_y = vertical ? along : edge - side * 8;
+      g_cross_phase = 1;
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE crossoff %ld: passagem (%d,%d)-(%d,%d), alvo (%d,%d)", level,
+          a.x, a.y, b.x, b.y, g_cross_target_x, g_cross_target_y);
+    }
+    const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+    if (g_cross_phase == 1) {
+      const map_overlay::Point to =
+          map_overlay::SubtileToClient(g_cross_approach_x, g_cross_approach_y);
+      const int32_t distance = std::abs(scan.player_x - g_cross_approach_x) +
+                               std::abs(scan.player_y - g_cross_approach_y);
+      if (distance > 12) {
+        if (now >= g_deadline) {
+          Say(AEONIAN_LOG_INFO, "MAPDRIVE crossoff %ld: nao alcancou a borda, parou em (%d,%d)",
+              level, scan.player_x, scan.player_y);
+          return true;
+        }
+        WalkStep(scan, to.x - me.x, to.y - me.y, now);
+        return false;
+      }
+      g_cross_phase = 2;
+      g_cross_until = now + 8000;
+      g_walk_next = 0;
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE crossoff %ld: tentando a pe de (%d,%d)", level,
+          scan.player_x, scan.player_y);
+    }
+    if (scan.level_id != g_cross_level || now >= g_cross_until) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE crossoff %ld: %s, nivel %d em (%d,%d)", level,
+          scan.level_id != g_cross_level ? "CRUZOU" : "nao cruzou", scan.level_id, scan.player_x,
+          scan.player_y);
+      return true;
+    }
+    if (now >= g_walk_next) {
+      g_walk_next = now + 300;
+      const map_overlay::Point to =
+          map_overlay::SubtileToClient(g_cross_target_x, g_cross_target_y);
+      ClickToward(to.x - me.x, to.y - me.y, 0.0, false);
+    }
+    return false;
   }
   if (c == "hover") {
     map_overlay::MarkKind kind = map_overlay::MarkKind::kMonster;
@@ -596,14 +850,17 @@ bool Step(DWORD now) {
     const map_overlay::Scan scan = ScanNow();
     const bool left_level =
         scan.in_game && scan.level_id != 0 && scan.level_id != g_click_level;
-    if (ui >= 0 ? UiOn(ui) : left_level) {
-      Say(AEONIAN_LOG_INFO, "MAPDRIVE clickmark %s concluido no nivel %d", name, scan.level_id);
-      return true;
-    }
     map_overlay::MarkKind kind = map_overlay::MarkKind::kNpc;
     double dx = 0.0;
     double dy = 0.0;
-    if (MarkKindFromName(name, &kind) && NearestMark(scan, kind, &dx, &dy) != nullptr) {
+    const map_overlay::Mark* nearest =
+        MarkKindFromName(name, &kind) ? NearestMark(scan, kind, &dx, &dy) : nullptr;
+    const bool used = ui == -2 && nearest != nullptr && nearest->used;
+    if (ui >= 0 ? UiOn(ui) : (ui == -2 ? used : left_level)) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE clickmark %s concluido no nivel %d", name, scan.level_id);
+      return true;
+    }
+    if (nearest != nullptr) {
       // Com Teletransporte, chega perto antes de clicar: um clique longe pode cair
       // num monstro ou num painel que abriu.
       const bool close_enough = g_walk_right && !map_overlay::IsTownLevel(scan.level_id)
@@ -685,7 +942,7 @@ bool Step(DWORD now) {
       Say(AEONIAN_LOG_INFO, "MAPDRIVE sweep %s: achou no nivel %d", name, scan.level_id);
       return true;
     }
-    // Vai ao ponto mais perto; chegou ou passou 6 s nele, risca e segue.
+    // Vai ao ponto mais perto; chegou ou passou 3 s nele, risca e segue.
     size_t best = g_sweep.size();
     int64_t best_d = 0;
     for (size_t i = 0; i < g_sweep.size(); ++i) {
@@ -702,13 +959,35 @@ bool Step(DWORD now) {
           scan.level_id);
       return true;
     }
-    if (best_d < 20 * 20 || now - g_sweep_since > 6000) {
+    if (best_d < 20 * 20 || now - g_sweep_since > 3000) {
       g_sweep.erase(g_sweep.begin() + static_cast<std::ptrdiff_t>(best));
       g_sweep_since = now;
       return false;
     }
     const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
     const map_overlay::Point to = map_overlay::SubtileToClient(g_sweep[best].x, g_sweep[best].y);
+    WalkStep(scan, to.x - me.x, to.y - me.y, now);
+    return false;
+  }
+  if (c == "walkabs") {
+    long x = 0;
+    long y = 0;
+    long timeout = 0;
+    std::sscanf(arg, "%ld %ld %ld", &x, &y, &timeout);
+    const map_overlay::Scan scan = ScanNow();
+    if (g_deadline == 0) {
+      g_deadline = now + static_cast<DWORD>(timeout);
+      g_walk_moved_ms = now;
+    }
+    const bool arrived = std::abs(scan.player_x - x) + std::abs(scan.player_y - y) < 4;
+    if (arrived || now >= g_deadline) {
+      Say(AEONIAN_LOG_INFO, "MAPDRIVE walkabs (%ld,%ld): %s, nivel %d em (%d,%d)", x, y,
+          arrived ? "chegou" : "prazo esgotado", scan.level_id, scan.player_x, scan.player_y);
+      return true;
+    }
+    const map_overlay::Point me = map_overlay::SubtileToClient(scan.player_x, scan.player_y);
+    const map_overlay::Point to =
+        map_overlay::SubtileToClient(static_cast<int32_t>(x), static_cast<int32_t>(y));
     WalkStep(scan, to.x - me.x, to.y - me.y, now);
     return false;
   }
