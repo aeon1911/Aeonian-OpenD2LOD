@@ -38,11 +38,16 @@ namespace {
 constexpr size_t kMaxTrackedPaths = 20000;
 
 LONG WINAPI CrashLogger(EXCEPTION_POINTERS* info) {
-  static volatile LONG reported = 0;
+  if (info == nullptr || info->ExceptionRecord == nullptr) return EXCEPTION_CONTINUE_SEARCH;
   DWORD code = info->ExceptionRecord->ExceptionCode;
+  if (code == EXCEPTION_STACK_OVERFLOW) {
+    // Probing normal de pilha (__chkstk): deixar o SO expandir a pagina de guarda
+    // sem alocar frames adicionais nesta thread.
+    return EXCEPTION_CONTINUE_SEARCH;
+  }
+  static volatile LONG reported = 0;
   bool interesting = code == EXCEPTION_ACCESS_VIOLATION ||
                      code == EXCEPTION_ILLEGAL_INSTRUCTION ||
-                     code == EXCEPTION_STACK_OVERFLOW ||
                      code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
                      code == EXCEPTION_PRIV_INSTRUCTION;
   if (interesting && InterlockedIncrement(&reported) <= 8) {

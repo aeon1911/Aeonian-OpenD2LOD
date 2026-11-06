@@ -40,7 +40,7 @@
 
 namespace aeonian {
 
-LoadLibraryAFn g_real_load_library_a = nullptr;
+LoadLibraryAFn g_real_load_library_a = &::LoadLibraryA;
 
 namespace {
 
@@ -588,7 +588,8 @@ void HookGlideModule(HMODULE module) {
 }  // namespace
 
 HMODULE WINAPI HookLoadLibraryA(LPCSTR name) {
-  HMODULE module = g_real_load_library_a(name);
+  LoadLibraryAFn fn = g_real_load_library_a ? g_real_load_library_a : &::LoadLibraryA;
+  HMODULE module = fn(name);
   if (module != nullptr) {
     if (IsGlideName(name)) HookGlideModule(module);
     HookModuleImports(module, name);

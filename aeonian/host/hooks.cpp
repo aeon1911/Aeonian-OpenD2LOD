@@ -48,13 +48,13 @@ using CreateWindowExA_t = HWND(WINAPI*)(DWORD, LPCSTR, LPCSTR, DWORD, int, int,
                                         LPVOID);
 
 struct Originals {
-  GetCommandLineA_t get_command_line = nullptr;
-  CreateFileA_t create_file = nullptr;
-  GetFileAttributesA_t get_file_attributes = nullptr;
-  ExitProcess_t exit_process = nullptr;
-  PeekMessageA_t peek_message = nullptr;
-  RegisterClassA_t register_class = nullptr;
-  CreateWindowExA_t create_window = nullptr;
+  GetCommandLineA_t get_command_line = &::GetCommandLineA;
+  CreateFileA_t create_file = &::CreateFileA;
+  GetFileAttributesA_t get_file_attributes = &::GetFileAttributesA;
+  ExitProcess_t exit_process = &::ExitProcess;
+  PeekMessageA_t peek_message = &::PeekMessageA;
+  RegisterClassA_t register_class = &::RegisterClassA;
+  CreateWindowExA_t create_window = &::CreateWindowExA;
 };
 Originals g_real;
 
@@ -233,7 +233,7 @@ bool HookImport(uint8_t* base, size_t size, const char* dll, const char* name,
   if (current == replacement) {
     return true;  // Ja interceptada
   }
-  if (original != nullptr && *original == nullptr) {
+  if (original != nullptr) {
     std::memcpy(original, &current, sizeof(current));
   }
   DWORD old = 0;

@@ -43,8 +43,8 @@
 namespace aeonian {
 
 DirectDrawCreateFn g_real_direct_draw_create = nullptr;
-StretchBltFn g_real_stretch_blt = nullptr;
-CreateDIBSectionFn g_real_create_dib_section = nullptr;
+StretchBltFn g_real_stretch_blt = &::StretchBlt;
+CreateDIBSectionFn g_real_create_dib_section = &::CreateDIBSection;
 
 namespace {
 
