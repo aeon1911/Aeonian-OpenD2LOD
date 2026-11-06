@@ -59,12 +59,36 @@ LONG WINAPI CrashLogger(EXCEPTION_POINTERS* info) {
     std::string where = module != nullptr ? ModulePath(module) : "?";
     size_t cut = where.find_last_of('\\');
     if (cut != std::string::npos) where.erase(0, cut + 1);
+    uint32_t ret_addr = 0;
+    if (info->ContextRecord != nullptr) {
+      MEMORY_BASIC_INFORMATION mbi = {};
+      if (VirtualQuery(reinterpret_cast<void*>(info->ContextRecord->Esp), &mbi, sizeof(mbi)) &&
+          (mbi.State & MEM_COMMIT) != 0) {
+        ret_addr = *reinterpret_cast<const uint32_t*>(info->ContextRecord->Esp);
+      }
+    }
+    HMODULE ret_mod = nullptr;
+    if (ret_addr != 0) {
+      GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(static_cast<uintptr_t>(ret_addr)),
+                         &ret_mod);
+    }
+    std::string ret_where = ret_mod != nullptr ? ModulePath(ret_mod) : "?";
+    size_t ret_cut = ret_where.find_last_of('\\');
+    if (ret_cut != std::string::npos) ret_where.erase(0, ret_cut + 1);
+
     log::Writef(log::Level::kWarn,
-                "excecao de 1a chance 0x%08lx em %p (%s+0x%lx)",
+                "excecao de 1a chance 0x%08lx em %p (%s+0x%lx), caller: %s+0x%lx (0x%08x)",
                 static_cast<unsigned long>(code), address, where.c_str(),
                 static_cast<unsigned long>(
                     reinterpret_cast<uintptr_t>(address) -
-                    reinterpret_cast<uintptr_t>(module)));
+                    reinterpret_cast<uintptr_t>(module)),
+                ret_where.c_str(),
+                static_cast<unsigned long>(
+                    reinterpret_cast<uintptr_t>(ret_addr) -
+                    reinterpret_cast<uintptr_t>(ret_mod)),
+                ret_addr);
   }
   return EXCEPTION_CONTINUE_SEARCH;
 }

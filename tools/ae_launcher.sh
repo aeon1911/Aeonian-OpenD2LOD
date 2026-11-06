@@ -59,3 +59,4 @@ case "$op" in
     4) exit 0 ;;
     *) echo "Opção inválida."; exit 1 ;;
 esac
+
