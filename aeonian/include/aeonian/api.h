@@ -47,6 +47,7 @@ extern "C" {
  * os arquivos .ini de aeonian/addresses; 0 = build nao reconhecida). */
 #define AEONIAN_BUILD_UNKNOWN 0u
 #define AEONIAN_BUILD_D2LOD_1_14D 1u
+#define AEONIAN_BUILD_D2LOD_1_13C 2u
 
 /* Codigos de retorno das funcoes que devolvem int. */
 #define AEONIAN_OK 0

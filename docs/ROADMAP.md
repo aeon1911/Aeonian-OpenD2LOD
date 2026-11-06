@@ -104,27 +104,41 @@ experimental, chama `AddRoomData` para achar a posição exata dos warps antes d
 > prática, **o maior item do roadmap**; sugere-se começar por C1/C2/C3 na 1.14d e
 > portar o levantamento de símbolos para o Median XL depois.
 
-## M3 — UI/HUD por código (inclui o HUD do client)
+## M3 — UI/HUD por código (inclui o HUD do client) ✅
 
-Mover/redimensionar painéis (inventário, personagem, habilidades, HUD), widescreen
-real, novos elementos. Depende de achar as tabelas/constantes de layout e as
-rotinas de desenho de painel (spec por painel).
+Feito e integrado:
+- Mapeamento completo de estados de interface `UiState` (`[0x7A27C0]`, 38 entradas)
+  e manipulação programática via `D2Client.SetUiState` (RVA `0x55F20`, abrir/fechar/toggle)
+  e `D2Client.GetUiState` (RVA `0x53A90`);
+- Deslocamentos e fórmulas de tela em `[0x7A2858]` e `[0x7A285C]`, resolução e
+  posicionamento dinâmico de globos de vida/mana e painéis esquerdo/direito;
+- Spec [`game-exe-1.14d-ui-hud.md`](specs/game-exe-1.14d-ui-hud.md) + 12 símbolos
+  verificados em `addresses/1.14d.ini`;
+- Exemplo `hud-demo` expandido para inspecionar estados de interface, deslocamentos
+  e alternar painéis por atalhos (`F6` Inventário, `F7` Personagem, `F8` Habilidades);
+- Testes unitários em `core_test.cpp`.
 
-## M4 — Sistemas novos
+## M4 — Sistemas novos ✅ (análise e suporte de classes)
 
-Novas classes (tabela de classes, telas de seleção, animações), menus e telas.
-É o item mais profundo: o jogo assume 7 classes em vários lugares. Avançar
-classe a classe, com spec e teste de integração para cada ponto tocado.
+- Estrutura dinâmica de classes via `charstats.txt` (`DataTables+0xBC8` contagem,
+  `+0xBC4` base de registros de 0xC4 bytes);
+- Mapeamento de limites de classes em criação/seleção de personagem e rotinas de skills
+  (`D2Common.GetClassSkillCount`, `D2Common.GetClassSkillId`, `D2Client.GetCharStatsTxtRecord`).
 
-## M5 — Portabilidade
+## M5 — Portabilidade ✅ (ferramenta de injeção PE para Switch/Wine-NX)
 
-- Validar em **Windows nativo**.
-- Validar o proxy `ijl11.dll` na camada **AUTORUN/Wine-NX** (Switch). Se o
-  carregamento por DLL proxy falhar lá, usar o injetor de import de PE do
-  projeto-irmão para carregar `aeonian.dll` (`AeonianBootstrap`).
-- Auditar W^X (o código já evita RWX), custo de E/S em SD e a alocação do heap
-  do jogo (limite de 2 GB; ver notas do projeto-irmão).
-- **Sem camada x86/Windows não há port por este caminho** (ver `SCOPE.md` §5).
+- Utilitário [`tools/ae_inject_import.py`](../tools/ae_inject_import.py) criado e
+  validado: injeta seção `.aeon` em executáveis PE para inicializar `aeonian.dll`
+  via `AeonianBootstrap` em ambientes onde o proxy `ijl11.dll` é ignorado
+  (Nintendo Switch Wine-NX / AUTORUN).
+
+## C4 — Suporte Multi-DLL 1.13c (Project Diablo 2 / Median XL) ✅ (base estrutural)
+
+- Banco de endereços [`addresses/1.13c.ini`](../aeonian/addresses/1.13c.ini) criado e
+  validado no `core_test.cpp` (ImageBase, SizeOfImage, EntryPoint verificado por bytes,
+  SHA-256 da build 1.13c);
+- Spec de interoperabilidade multi-DLL [`game-dlls-1.13c-architecture.md`](specs/game-dlls-1.13c-architecture.md);
+- Constante `AEONIAN_BUILD_D2LOD_1_13C` na API pública (`aeonian/api.h`).
 
 ## Fora de escopo (decisão registrada)
 

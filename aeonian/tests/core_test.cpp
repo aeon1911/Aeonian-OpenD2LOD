@@ -319,6 +319,53 @@ void TestAddressDb() {
     game.timestamp = 0x574ddfbc; game.size_of_image = 0x5ba000;
     game.entry_rva = 0x282985;
     CHECK(real->Matches(game));
+
+    // Simbolos de UI / HUD (M3)
+    const Symbol* s_set_ui = real->Find("D2Client.SetUiState");
+    CHECK(s_set_ui != nullptr);
+    if (s_set_ui != nullptr) {
+      CHECK_EQ(s_set_ui->rva, 0x055F20u);
+      CHECK_EQ(s_set_ui->expect.size(), 24u);
+    }
+    const Symbol* s_disp = real->Find("D2Client.UiDrawDispatcher");
+    CHECK(s_disp != nullptr);
+    if (s_disp != nullptr) {
+      CHECK_EQ(s_disp->rva, 0x056EE0u);
+      CHECK_EQ(s_disp->expect.size(), 24u);
+    }
+    CHECK(real->Find("D2Client.DrawInventory") != nullptr);
+    CHECK(real->Find("D2Client.DrawCharacterSheet") != nullptr);
+    CHECK(real->Find("D2Client.DrawSkillTree") != nullptr);
+    CHECK(real->Find("D2Client.DrawHealthOrb") != nullptr);
+    CHECK(real->Find("D2Client.DrawManaOrb") != nullptr);
+    CHECK(real->Find("D2Client.DrawExpBar") != nullptr);
+    CHECK(real->Find("D2Client.DrawBelt") != nullptr);
+    CHECK(real->Find("D2Client.PanelSideLeftCheck") != nullptr);
+    CHECK(real->Find("D2Client.PanelSideRightCheck") != nullptr);
+  }
+
+  // O banco real da 1.13c versionado no repositorio.
+  std::ifstream f13c(std::string(AEONIAN_SOURCE_DIR) + "/addresses/1.13c.ini",
+                     std::ios::binary);
+  CHECK(f13c.good());
+  std::stringstream buf13c;
+  buf13c << f13c.rdbuf();
+  auto real13c = AddressDb::Parse(buf13c.str(), &err);
+  CHECK(real13c.has_value());
+  if (real13c.has_value()) {
+    CHECK_EQ(real13c->build_name(), "1.13c");
+    CHECK_EQ(real13c->build_id(), 2u);
+    CHECK_EQ(real13c->sha256().size(), 64u);
+    const Symbol* ep = real13c->Find("Game.EntryPoint");
+    CHECK(ep != nullptr);
+    if (ep != nullptr) {
+      CHECK_EQ(ep->rva, 0x122Eu);
+      CHECK_EQ(ep->expect.size(), 16u);
+    }
+    PeInfo game13c;
+    game13c.timestamp = 0x4b95ca4b; game13c.size_of_image = 0x11000;
+    game13c.entry_rva = 0x122e;
+    CHECK(real13c->Matches(game13c));
   }
 }
 
