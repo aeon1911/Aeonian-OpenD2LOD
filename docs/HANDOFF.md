@@ -18,7 +18,8 @@ Os marcos M1, M2.1, M2.2, M3, M4, M5 e os requisitos C1 a C4 estão implementado
 - M3: UI e HUD por código, spec `game-exe-1.14d-ui-hud.md`, símbolos em `1.14d.ini`, controle de painéis em `hud-demo`;
 - M4: Mapeamento da estrutura de classes em `charstats.txt` e rotinas de classe;
 - M5: Utilitário `tools/ae_inject_import.py` para injeção de imports PE no Nintendo Switch (Wine-NX);
-- C4: Suporte multi-DLL 1.13c, perfil `1.13c.ini` e spec `game-dlls-1.13c-architecture.md`.
+- C4: Suporte multi-DLL 1.13c, Project Diablo 2 e Median XL: spec `game-dlls-1.13c-architecture.md`, perfil `1.13c.ini` com símbolos verificados, hook multi-módulo no bootstrap e `HookLoadLibraryA`, resolução multi-módulo em `Runtime::ResolveSymbol` com conferência de bytes;
+- PlugY: plugin `plugy-stash` implementado e integrado com baú compartilhado/multipage (`.sss`/`.d2x`) e respec livre de atributos;
 
 Confira antes de confiar neste texto:
 

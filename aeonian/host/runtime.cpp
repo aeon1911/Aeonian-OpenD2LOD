@@ -678,7 +678,28 @@ uintptr_t Runtime::ResolveSymbol(const char* name) const {
   if (!db_) return 0;
   const Symbol* symbol = db_->Find(name);
   if (symbol == nullptr) return 0;
-  const uintptr_t address = game_base_ + symbol->rva;
+
+  uintptr_t module_base = game_base_;
+  if (build_id_ == AEONIAN_BUILD_D2LOD_1_13C) {
+    std::string_view sym_name(symbol->name);
+    size_t dot = sym_name.find('.');
+    if (dot != std::string_view::npos) {
+      std::string mod_prefix = ToLowerAscii(std::string(sym_name.substr(0, dot)));
+      if (mod_prefix != "game") {
+        std::string dll_name = std::string(sym_name.substr(0, dot)) + ".dll";
+        HMODULE mod = GetModuleHandleA(dll_name.c_str());
+        if (mod == nullptr) {
+          log::Writef(log::Level::kWarn,
+                      "simbolo %s: modulo %s nao esta carregado", name,
+                      dll_name.c_str());
+          return 0;
+        }
+        module_base = reinterpret_cast<uintptr_t>(mod);
+      }
+    }
+  }
+
+  const uintptr_t address = module_base + symbol->rva;
   if (symbol->expect.empty()) return address;
   // Confere contra os bytes ORIGINAIS: se um mod ja desviou a funcao
   // (hook_inline/patch_bytes), o motor sabe o que estava la. Fora das faixas

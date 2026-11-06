@@ -366,6 +366,37 @@ void TestAddressDb() {
     game13c.timestamp = 0x4b95ca4b; game13c.size_of_image = 0x11000;
     game13c.entry_rva = 0x122e;
     CHECK(real13c->Matches(game13c));
+
+    // Multi-DLL 1.13c: D2Client, D2Common, Storm, Fog
+    const Symbol* s_pu = real13c->Find("D2Client.GetPlayerUnit");
+    CHECK(s_pu != nullptr);
+    if (s_pu != nullptr) {
+      CHECK_EQ(s_pu->rva, 0x062e20u);
+      CHECK_EQ(s_pu->expect.size(), 10u);
+    }
+    const Symbol* s_stat = real13c->Find("D2Common.GetUnitStat");
+    CHECK(s_stat != nullptr);
+    if (s_stat != nullptr) {
+      CHECK_EQ(s_stat->rva, 0x0346f0u);
+      CHECK_EQ(s_stat->expect.size(), 9u);
+    }
+    const Symbol* s_item = real13c->Find("D2Common.GetFirstInventoryItem");
+    CHECK(s_item != nullptr);
+    if (s_item != nullptr) {
+      CHECK_EQ(s_item->rva, 0x05a810u);
+      CHECK_EQ(s_item->expect.size(), 11u);
+    }
+    CHECK(real13c->Find("D2Client.InitStashUi") != nullptr);
+    CHECK(real13c->Find("D2Client.CloseStashUi") != nullptr);
+    CHECK(real13c->Find("D2Client.DrawStashPanel") != nullptr);
+    CHECK(real13c->Find("D2Common.GetUnitBaseStat") != nullptr);
+    CHECK(real13c->Find("D2Common.GetNextInventoryItem") != nullptr);
+    CHECK(real13c->Find("D2Common.RemoveItemFromInventory") != nullptr);
+    CHECK(real13c->Find("D2Common.GetSkillById") != nullptr);
+    CHECK(real13c->Find("D2Common.GetSkillLevel") != nullptr);
+    CHECK(real13c->Find("Storm.SFileOpenFile") != nullptr);
+    CHECK(real13c->Find("Fog.Alloc") != nullptr);
+    CHECK(real13c->Find("Fog.Free") != nullptr);
   }
 }
 

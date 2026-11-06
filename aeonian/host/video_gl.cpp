@@ -33,6 +33,7 @@
 
 #include "aeonian/api.h"
 #include "core/pe_image.h"
+#include "host/hooks.h"
 #include "host/log.h"
 #include "host/runtime.h"
 #include "host/video.h"
@@ -588,7 +589,10 @@ void HookGlideModule(HMODULE module) {
 
 HMODULE WINAPI HookLoadLibraryA(LPCSTR name) {
   HMODULE module = g_real_load_library_a(name);
-  if (module != nullptr && IsGlideName(name)) HookGlideModule(module);
+  if (module != nullptr) {
+    if (IsGlideName(name)) HookGlideModule(module);
+    HookModuleImports(module, name);
+  }
   return module;
 }
 

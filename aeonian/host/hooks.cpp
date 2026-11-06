@@ -218,22 +218,29 @@ HWND WINAPI HookCreateWindowExA(DWORD ex_style, LPCSTR class_name,
 
 template <typename Fn>
 bool HookImport(uint8_t* base, size_t size, const char* dll, const char* name,
-                Fn hook, Fn* original) {
+                Fn hook, Fn* original, bool warn_on_missing = true) {
   uint32_t* slot = FindImportSlot(base, size, dll, name);
   if (slot == nullptr) {
-    log::Writef(log::Level::kWarn, "importacao %s!%s ausente; nao interceptada",
-                dll, name);
+    if (warn_on_missing) {
+      log::Writef(log::Level::kWarn, "importacao %s!%s ausente; nao interceptada",
+                  dll, name);
+    }
     return false;
   }
   uint32_t current = *slot;
-  std::memcpy(original, &current, sizeof(current));
+  uint32_t replacement = 0;
+  std::memcpy(&replacement, &hook, sizeof(replacement));
+  if (current == replacement) {
+    return true;  // Ja interceptada
+  }
+  if (original != nullptr && *original == nullptr) {
+    std::memcpy(original, &current, sizeof(current));
+  }
   DWORD old = 0;
   if (!VirtualProtect(slot, sizeof(*slot), PAGE_READWRITE, &old)) {
     log::Writef(log::Level::kError, "VirtualProtect falhou em %s!%s", dll, name);
     return false;
   }
-  uint32_t replacement = 0;
-  std::memcpy(&replacement, &hook, sizeof(replacement));
   *slot = replacement;
   DWORD ignored = 0;
   VirtualProtect(slot, sizeof(*slot), old, &ignored);
@@ -241,10 +248,86 @@ bool HookImport(uint8_t* base, size_t size, const char* dll, const char* name,
   return true;
 }
 
+CRITICAL_SECTION g_module_lock;
+bool g_module_lock_inited = false;
+std::vector<HMODULE> g_hooked_modules;
+
 }  // namespace
+
+void HookModuleImports(void* module_handle, const char* module_name) {
+  if (module_handle == nullptr) return;
+  HMODULE mod = static_cast<HMODULE>(module_handle);
+
+  if (!g_module_lock_inited) {
+    InitializeCriticalSection(&g_module_lock);
+    g_module_lock_inited = true;
+  }
+
+  EnterCriticalSection(&g_module_lock);
+  for (HMODULE h : g_hooked_modules) {
+    if (h == mod) {
+      LeaveCriticalSection(&g_module_lock);
+      return;
+    }
+  }
+  g_hooked_modules.push_back(mod);
+  LeaveCriticalSection(&g_module_lock);
+
+  uint8_t* base = reinterpret_cast<uint8_t*>(mod);
+  PeInfo info;
+  if (!ParsePeHeaders(base, 0x1000, &info)) {
+    return;
+  }
+  size_t size = info.size_of_image;
+
+  int count = 0;
+  auto try_hook = [&](bool ok) { count += ok ? 1 : 0; };
+
+  try_hook(HookImport(base, size, "KERNEL32.dll", "CreateFileA", &HookCreateFileA,
+                      &g_real.create_file, false));
+  try_hook(HookImport(base, size, "KERNEL32.dll", "GetFileAttributesA",
+                      &HookGetFileAttributesA, &g_real.get_file_attributes, false));
+  try_hook(HookImport(base, size, "KERNEL32.dll", "LoadLibraryA", &HookLoadLibraryA,
+                      &g_real_load_library_a, false));
+  try_hook(HookImport(base, size, "KERNEL32.dll", "GetCommandLineA",
+                      &HookGetCommandLineA, &g_real.get_command_line, false));
+  try_hook(HookImport(base, size, "KERNEL32.dll", "ExitProcess", &HookExitProcess,
+                      &g_real.exit_process, false));
+
+  try_hook(HookImport(base, size, "USER32.dll", "PeekMessageA", &HookPeekMessageA,
+                      &g_real.peek_message, false));
+  try_hook(HookImport(base, size, "USER32.dll", "RegisterClassA",
+                      &HookRegisterClassA, &g_real.register_class, false));
+  try_hook(HookImport(base, size, "USER32.dll", "CreateWindowExA",
+                      &HookCreateWindowExA, &g_real.create_window, false));
+
+  try_hook(HookImport(base, size, "GDI32.dll", "CreateDIBSection",
+                      &HookCreateDIBSection, &g_real_create_dib_section, false));
+  try_hook(HookImport(base, size, "GDI32.dll", "StretchBlt", &HookStretchBlt,
+                      &g_real_stretch_blt, false));
+  try_hook(HookImport(base, size, "DDRAW.dll", "DirectDrawCreate",
+                      &HookDirectDrawCreate, &g_real_direct_draw_create, false));
+  try_hook(HookImport(base, size, "binkw32.dll", "_BinkOpen@8", &HookBinkOpen,
+                      &g_real_bink_open, false));
+  try_hook(HookImport(base, size, "smackw32.dll", "_SmackOpen@12",
+                      &HookSmackOpen, &g_real_smack_open, false));
+
+  if (count > 0) {
+    log::Writef(log::Level::kInfo, "modulo '%s' (0x%08lx): %d importacoes interceptadas",
+                module_name ? module_name : "desconhecido",
+                static_cast<unsigned long>(reinterpret_cast<uintptr_t>(mod)),
+                count);
+  }
+}
 
 void InstallHooks(uint8_t* base, size_t size) {
   InitializeCriticalSection(&g_window_lock);
+  if (!g_module_lock_inited) {
+    InitializeCriticalSection(&g_module_lock);
+    g_module_lock_inited = true;
+  }
+  g_hooked_modules.push_back(reinterpret_cast<HMODULE>(base));
+
   int installed = 0;
   auto count = [&](bool ok) { installed += ok ? 1 : 0; };
   count(HookImport(base, size, "KERNEL32.dll", "GetCommandLineA",
@@ -273,7 +356,19 @@ void InstallHooks(uint8_t* base, size_t size) {
                    &g_real_create_dib_section));
   count(HookImport(base, size, "GDI32.dll", "StretchBlt", &HookStretchBlt,
                    &g_real_stretch_blt));
-  log::Writef(log::Level::kInfo, "%d/13 importacoes interceptadas", installed);
+  log::Writef(log::Level::kInfo, "%d/13 importacoes interceptadas em Game.exe", installed);
+
+  static const char* const kEarlyModules[] = {
+      "Storm.dll", "Fog.dll", "D2Win.dll", "D2gfx.dll", "D2sound.dll",
+      "D2MCPClient.dll", "D2Client.dll", "D2Common.dll", "D2Game.dll",
+      "D2CMP.dll", "D2Lang.dll", "D2Launch.dll", "D2Net.dll"
+  };
+  for (const char* mod_name : kEarlyModules) {
+    HMODULE mod = GetModuleHandleA(mod_name);
+    if (mod != nullptr) {
+      HookModuleImports(mod, mod_name);
+    }
+  }
 }
 
 }  // namespace aeonian

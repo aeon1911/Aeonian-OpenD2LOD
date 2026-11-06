@@ -32,6 +32,9 @@ namespace aeonian {
 // importacao interceptada (ou ausente).
 void InstallHooks(uint8_t* image_base, size_t image_size);
 
+// Instala hooks de IAT em um modulo carregado dinamicamente (1.13c multi-DLL, PD2, MXL).
+void HookModuleImports(void* module_handle, const char* module_name);
+
 }  // namespace aeonian
 
 #endif  // AEONIAN_HOST_HOOKS_H_
