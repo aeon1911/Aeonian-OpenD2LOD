@@ -103,7 +103,7 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | VFS de mods (arquivos de `data\`) | ✅ | log + trace de arquivos do Wine |
 | Plugins + eventos + hook inline | ✅ | selftest dentro do `Game.exe` |
 | Falha segura (build desconhecida, `AEONIAN_DISABLE`) | ✅ | fases B/C da suíte |
-| Símbolos de código do jogo | ✅ 108 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho, vida, personagem, DataTables, UI/HUD, 1.13c), com specs | `addresses/1.14d.ini`, `addresses/1.13c.ini`; `core_test.cpp` |
+| Símbolos de código do jogo | ✅ 134 (1.14d: unidades, níveis, automap, vida, personagem, DataTables, UI/HUD, inventário/baú/PlugY) + 1.13c multi-DLL, com specs | `addresses/1.14d.ini`, `addresses/1.13c.ini`; `core_test.cpp` |
 | `on_present` (overlay) GDI + D2GL/OpenGL, `request_screenshot`, mods API | ✅ | suíte: quadro do jogo gravado e comparado |
 | Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica e imagem completa com o **release oficial** v1.3.3 (Wine 11.20, RX 9070 XT, 2026-10-29); o instalador avisa se o D2GL não for oficial | [`modding/D2GL.md`](modding/D2GL.md) |
 | Mod de arte visível (botões recoloridos via VFS) | ✅ | diff de 11 mil pixels no menu |
@@ -112,6 +112,7 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | Estado do jogo: personagem; requisitos C3/C4 do client | ✅ | `build-planner` (C3), spec 1.13c multi-DLL e `1.13c.ini` (C4) |
 | Portabilidade: injeção PE para Switch (Wine-NX) | ✅ | ferramenta `tools/ae_inject_import.py` para carregar `aeonian.dll` (`AeonianBootstrap`) |
 | UI e HUD por código (M3) | ✅ | spec `game-exe-1.14d-ui-hud.md`, símbolos e controle de painéis no `hud-demo` |
+| Subsistema de Inventário, Baú e PlugY nativo | ✅ | spec `game-exe-1.14d-inventory-stash.md`, layout `Inventory`/`ItemNode`, símbolos em `1.14d.ini` |
 | Medição de FPS em monitores de alta taxa/4K; outros monitores e GPUs | ⬜ **não medido** (a imagem em partida foi vista com o D2GL oficial; ver D2GL.md) | — |
 | Instalação **oficial** da loja (1.14d completa) | ⬜ **não testado**: a suíte rodou na instalação reconstruída (MPQs 1.14b + `Game.exe` 1.14d) | — |
 

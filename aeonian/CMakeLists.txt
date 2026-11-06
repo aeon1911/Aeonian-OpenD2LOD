@@ -117,6 +117,17 @@ if(WIN32)
     set_target_properties(build_planner_plugin PROPERTIES
         PREFIX "" OUTPUT_NAME "build_planner")
 
+    # Plugin de Bau e Respec PlugY nativo.
+    add_library(plugy_stash_plugin SHARED
+        examples/plugy-stash/plugy_stash.cpp
+        examples/plugy-stash/stash_storage.cpp)
+    target_include_directories(plugy_stash_plugin PRIVATE include)
+    target_link_libraries(plugy_stash_plugin PRIVATE ae_core ae_warnings gdi32 user32)
+    target_compile_options(plugy_stash_plugin PRIVATE ${AE_WIN_COMPILE})
+    target_link_options(plugy_stash_plugin PRIVATE ${AE_WIN_LINK})
+    set_target_properties(plugy_stash_plugin PROPERTIES
+        PREFIX "" OUTPUT_NAME "plugy_stash")
+
     # Plugin de autoteste (so para tests/integration).
     add_library(selftest_plugin SHARED
         tests/integration/selftest-plugin/selftest.cpp)
@@ -164,4 +175,13 @@ else()
     target_compile_definitions(ae_build_planner_test PRIVATE
         AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME build_planner COMMAND ae_build_planner_test)
+
+    # Logica portavel do mod plugy-stash (Bau infinito/compartilhado).
+    add_executable(ae_stash_test
+        examples/plugy-stash/stash_storage_test.cpp
+        examples/plugy-stash/stash_storage.cpp)
+    target_link_libraries(ae_stash_test PRIVATE ae_core ae_warnings)
+    target_compile_definitions(ae_stash_test PRIVATE
+        AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME stash COMMAND ae_stash_test)
 endif()
