@@ -46,7 +46,9 @@ PROXY_MARKER = b"ijl11_real."  # presente no proxy, ausente na DLL original
 MANIFEST = "install.json"
 # Arquivos do D2GL: (nome, obrigatorio, sobrescrever_se_existir). O d2gl.ini e a
 # configuracao do usuario: so e copiado se a pasta do jogo ainda nao tiver um.
-D2GL_FILES = [("glide3x.dll", False, True), ("ddraw.dll", False, True),
+# Nota: ddraw.dll nao e instalado por padrao porque o wrapper DDraw do D2GL trava
+# no Wine e conflita com -w; o caminho validado e oficial e o Glide (glide3x.dll).
+D2GL_FILES = [("glide3x.dll", False, True),
               ("d2gl.mpq", True, True), ("d2gl.ini", False, False)]
 D2GL_MARKER = b"d2gl.mpq"
 # SHA-256 dos arquivos dos releases oficiais do D2GL (D2GL.v1.3.3.zip do GitHub
