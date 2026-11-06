@@ -46,11 +46,13 @@ using GetPlayerUnitFn = void* (*)();
 using GetUiStateFn = int (__fastcall*)(int ui_id);
 using AddUnitStatFn = int (__stdcall*)(void* unit, int stat_id, int value, uint16_t layer);
 using GetUnitBaseStatFn = int (__stdcall*)(void* unit, int stat_id, uint16_t layer);
+using GetUnitStatFn = int (__stdcall*)(void* unit, int stat_id, uint16_t layer);
 
 GetPlayerUnitFn g_get_player_unit = nullptr;
 GetUiStateFn g_get_ui_state = nullptr;
 AddUnitStatFn g_add_unit_stat = nullptr;
 GetUnitBaseStatFn g_get_unit_base_stat = nullptr;
+GetUnitStatFn g_get_unit_stat = nullptr;
 
 const int32_t* g_screen_offset_left_x = nullptr;
 const int32_t* g_screen_offset_top_y = nullptr;
@@ -85,6 +87,8 @@ enum ButtonId {
   kBtnRespecEne,
   kBtnRespecDex,
   kBtnRespecVit,
+  kBtnRespecSkills,
+  kBtnToggleStats,
 };
 
 Button g_btn_first = {};
@@ -98,6 +102,9 @@ Button g_btn_respec_str = {};
 Button g_btn_respec_ene = {};
 Button g_btn_respec_dex = {};
 Button g_btn_respec_vit = {};
+Button g_btn_respec_skills = {};
+Button g_btn_toggle_stats = {};
+bool g_show_extended_stats = false;
 
 HFONT MakeFont(int height, int weight) {
   return CreateFontA(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, ANSI_CHARSET,
@@ -144,6 +151,9 @@ void ResolveSymbols(const AeonianHost* host) {
 
   const uintptr_t get_stat_va = host->resolve_symbol(host, "D2Common.GetUnitBaseStat");
   if (get_stat_va != 0) g_get_unit_base_stat = reinterpret_cast<GetUnitBaseStatFn>(get_stat_va);
+
+  const uintptr_t get_total_stat_va = host->resolve_symbol(host, "D2Common.GetUnitStat");
+  if (get_total_stat_va != 0) g_get_unit_stat = reinterpret_cast<GetUnitStatFn>(get_total_stat_va);
 
   const uintptr_t offsets_anchor = host->resolve_symbol(host, "D2Client.UiScreenOffsetsAnchor");
   if (offsets_anchor != 0) {
@@ -342,9 +352,60 @@ void OnPresent(void*, AeonianCanvas* canvas) {
     DrawBox(dc, g_btn_respec_vit.rect, kBtnFill, kRed);
     DrawTextCentered(dc, g_font_bold, kRed, g_btn_respec_vit.rect, "-");
 
-    // Dica de Respec
-    TextOutAt(dc, g_font, kDarkGold, off_x + 16, h + off_y - 34,
-              "[-] PlugY Respec: recupera pontos livres");
+    // Botão Reset Skills
+    g_btn_respec_skills.rect = {off_x + 16, h + off_y - 36, off_x + 105, h + off_y - 18};
+    DrawBox(dc, g_btn_respec_skills.rect, kBtnFill, kGold);
+    DrawTextCentered(dc, g_font_bold, kGold, g_btn_respec_skills.rect, "Reset Skills");
+
+    // Botão Stats Avançados [>]
+    g_btn_toggle_stats.rect = {off_x + 115, h + off_y - 36, off_x + 215, h + off_y - 18};
+    DrawBox(dc, g_btn_toggle_stats.rect, kBtnFill, g_show_extended_stats ? kGreen : kDarkGold);
+    DrawTextCentered(dc, g_font_bold, g_show_extended_stats ? kGreen : kGold,
+                     g_btn_toggle_stats.rect, g_show_extended_stats ? "[<] Ocultar" : "[>] Stats Extra");
+
+    // 3. Painel de Estatísticas Avançadas (quando aberto)
+    if (g_show_extended_stats && g_get_player_unit && g_get_unit_stat) {
+      void* player = g_get_player_unit();
+      if (player != nullptr) {
+        const int px = off_x + 325;
+        const int py = h + off_y - 280;
+        const int pw = 195;
+        const int ph = 245;
+
+        RECT pnl_rect = {px, py, px + pw, py + ph};
+        DrawBox(dc, pnl_rect, kPanel, kGold);
+
+        int ty = py + 8;
+        TextOutAt(dc, g_font_bold, kGold, px + 12, ty, "ESTATÍSTICAS AVANÇADAS");
+        ty += 22;
+
+        char buf[64];
+        auto draw_stat = [&](const char* label, int stat_id, const char* suffix, COLORREF color) {
+          int val = g_get_unit_stat(player, stat_id, 0);
+          std::snprintf(buf, sizeof(buf), "%s: %+d%s", label, val, suffix);
+          TextOutAt(dc, g_font, color, px + 14, ty, buf);
+          ty += 16;
+        };
+
+        draw_stat("Magic Find", 80, "%", kGold);
+        draw_stat("Extra Gold", 79, "%", kGold);
+        draw_stat("Faster Cast (FCR)", 105, "%", kGreen);
+        draw_stat("Faster Hit Rec (FHR)", 99, "%", kGreen);
+        draw_stat("Attack Speed (IAS)", 93, "%", kGreen);
+        draw_stat("Faster Run (FRW)", 96, "%", kGreen);
+        draw_stat("Crushing Blow", 136, "%", kRed);
+        draw_stat("Deadly Strike", 141, "%", kRed);
+        draw_stat("Open Wounds", 135, "%", kRed);
+        draw_stat("Damage Reduced", 36, "%", RGB(150, 200, 255));
+
+        int fr = g_get_unit_stat(player, 39, 0);
+        int cr = g_get_unit_stat(player, 43, 0);
+        int lr = g_get_unit_stat(player, 41, 0);
+        int pr = g_get_unit_stat(player, 45, 0);
+        std::snprintf(buf, sizeof(buf), "Res: F:%d C:%d L:%d P:%d", fr, cr, lr, pr);
+        TextOutAt(dc, g_font, RGB(255, 180, 100), px + 14, ty, buf);
+      }
+    }
   }
 }
 
@@ -422,21 +483,78 @@ int OnWindowMessage(void*, AeonianWindowMessage* msg) {
           msg->result = 0;
           return 1;
         }
+
+        if (PtInButton(g_btn_respec_skills, x, y)) {
+          uint8_t* p = reinterpret_cast<uint8_t*>(player);
+          uint32_t skill_list_addr = 0;
+          std::memcpy(&skill_list_addr, p + 0xA8, sizeof(skill_list_addr));
+          if (skill_list_addr != 0) {
+            uint8_t* slist = reinterpret_cast<uint8_t*>(skill_list_addr);
+            uint32_t curr_skill = 0;
+            std::memcpy(&curr_skill, slist + 0x04, sizeof(curr_skill));
+
+            int refunded = 0;
+            int guard = 0;
+            while (curr_skill != 0 && guard++ < 200) {
+              uint8_t* s = reinterpret_cast<uint8_t*>(curr_skill);
+              int32_t owner_guid = 0;
+              std::memcpy(&owner_guid, s + 0x34, sizeof(owner_guid));
+              int32_t base_lvl = 0;
+              std::memcpy(&base_lvl, s + 0x28, sizeof(base_lvl));
+
+              if (owner_guid == -1 && base_lvl > 0) {
+                refunded += base_lvl;
+                int32_t zero = 0;
+                std::memcpy(s + 0x28, &zero, sizeof(zero));
+              }
+
+              uint32_t next_skill = 0;
+              std::memcpy(&next_skill, s + 0x04, sizeof(next_skill));
+              curr_skill = next_skill;
+            }
+
+            if (refunded > 0) {
+              g_add_unit_stat(player, 5 /* newskills */, refunded, 0);
+              if (g_host) {
+                char b[128];
+                std::snprintf(b, sizeof(b),
+                              "[plugy-stash] Respec de habilidades: %d ponto(s) recuperados!",
+                              refunded);
+                g_host->log(g_host, AEONIAN_LOG_INFO, b);
+              }
+            }
+          }
+          msg->result = 0;
+          return 1;
+        }
+
+        if (PtInButton(g_btn_toggle_stats, x, y)) {
+          g_show_extended_stats = !g_show_extended_stats;
+          msg->result = 0;
+          return 1;
+        }
       }
     }
   }
 
-  // 2. Atalhos de Teclado quando o baú está aberto
-  if (msg->message == WM_KEYDOWN && g_get_ui_state && g_get_ui_state(0x19) == 1) {
-    if (msg->wparam == VK_PRIOR || msg->wparam == VK_LEFT) {  // PageUp / Esquerda
-      g_storage.PrevPage();
+  // 2. Atalhos de Teclado
+  if (msg->message == WM_KEYDOWN) {
+    if (msg->wparam == VK_F10) {
+      g_show_extended_stats = !g_show_extended_stats;
       msg->result = 0;
       return 1;
     }
-    if (msg->wparam == VK_NEXT || msg->wparam == VK_RIGHT) {  // PageDown / Direita
-      g_storage.NextPage();
-      msg->result = 0;
-      return 1;
+    if (g_get_ui_state && g_get_ui_state(0x19) == 1) {
+      if (msg->wparam == VK_PRIOR || msg->wparam == VK_LEFT) {  // PageUp / Esquerda
+        g_storage.PrevPage();
+        msg->result = 0;
+        return 1;
+      }
+      if (msg->wparam == VK_NEXT || msg->wparam == VK_RIGHT) {  // PageDown / Direita
+        g_storage.NextPage();
+        msg->result = 0;
+        return 1;
+      }
     }
   }
 
@@ -450,7 +568,8 @@ extern "C" __declspec(dllexport) int AeonianPluginInit(const AeonianHost* host) 
   if (host == nullptr || host->struct_size < sizeof(AeonianHost)) {
     return AEONIAN_ERR_ARGUMENT;
   }
-  if (host->game_build != AEONIAN_BUILD_D2LOD_1_14D) {
+  if (host->game_build != AEONIAN_BUILD_D2LOD_1_14D &&
+      host->game_build != AEONIAN_BUILD_D2LOD_1_13C) {
     return AEONIAN_ERR_UNSUPPORTED;
   }
 

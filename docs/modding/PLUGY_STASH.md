@@ -28,13 +28,29 @@ completa de arquivos de save.
   - `PageUp` ou `Seta Esquerda`: Página anterior
   - `PageDown` ou `Seta Direita`: Próxima página
 
-### 1.2 Respec Livre de Atributos (Stats Unallocation)
+### 1.2 Respec Livre de Atributos e Habilidades
 - Na **Folha de Personagem** (tecla `C` ou `A`):
-  - Botões vermelhos `[-]` são exibidos ao lado de cada atributo (Força, Energia,
-    Destreza, Vitalidade).
-  - Clicar em `[-]` devolve o ponto do atributo de volta para os **Pontos Livres**
-    (`statpts`), permitindo redistribuição imediata.
-  - Mantém atributos mínimos básicos (10) para evitar quebrar requisitos do jogo.
+  - Botões vermelhos `[-]` ao lado de cada atributo (Força, Energia, Destreza, Vitalidade)
+    permitem devolver pontos diretamente para os **Pontos Livres** (`statpts`).
+  - Botão **`Reset Skills`**: varre a lista de habilidades do jogador e devolve
+    todos os pontos investidos de volta para **Pontos de Habilidade** (`newskills`).
+
+### 1.3 Painel de Estatísticas Avançadas (Extended Stats)
+- Botão **`[>] Stats Extra`** na folha de personagem (ou atalho **`F10`**):
+  - Abre um painel lateral dinâmico exibindo as estatísticas ocultas do personagem:
+    - `Magic Find` (MF %) e `Extra Gold` (GF %)
+    - `Faster Cast Rate` (FCR %)
+    - `Faster Hit Recovery` (FHR %)
+    - `Increased Attack Speed` (IAS %)
+    - `Faster Run/Walk` (FRW %)
+    - `Crushing Blow` (CB %)
+    - `Deadly Strike` (DS %)
+    - `Open Wounds` (OW %)
+    - `Damage Reduced` (DR %)
+    - Resistências efetivas (Fogo, Gelo, Raio, Veneno)
+
+### 1.4 Suporte Multi-Versão
+- Totalmente compatível com **1.14d** e **1.13c** (Project Diablo 2 e Median XL).
 
 ---
 
