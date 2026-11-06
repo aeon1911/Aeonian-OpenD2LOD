@@ -10,9 +10,15 @@
 mudar HUD, classes, habilidades, sprites e mapas. É o que o Median XL fez com engenharia
 reversa, só que aberto e para o jogo vanilla. Não é um jogo novo.
 
-**Situação em 2026-10-31:** o trabalho está na `main`, publicado até `dc50244`. Nada ficou pela
-metade e nenhuma sessão está rodando. O primeiro mod de teste (`map-overlay`, C1/C2) está
-pronto nos Atos I a V, com as ressalvas de [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md).
+**Situação em 2026-11-06:** o trabalho está na `main`, publicado e sincronizado com o GitHub.
+Os marcos M1, M2.1, M2.2, M3, M4, M5 e os requisitos C1 a C4 estão implementados e testados:
+- C1/C2: `map-overlay` (Atos I–V, monstros, saídas, waypoints, objetivos, vida de monstros e aliados);
+- C3: `build-planner` (planos versionados, F8, pacotes 0x3A/0x3B de distribuição em partida);
+- M1/M2.2.4: compilação automática `-txt` com cache isolado em VFS `aeonian/cache/data/global/excel/`;
+- M3: UI e HUD por código, spec `game-exe-1.14d-ui-hud.md`, símbolos em `1.14d.ini`, controle de painéis em `hud-demo`;
+- M4: Mapeamento da estrutura de classes em `charstats.txt` e rotinas de classe;
+- M5: Utilitário `tools/ae_inject_import.py` para injeção de imports PE no Nintendo Switch (Wine-NX);
+- C4: Suporte multi-DLL 1.13c, perfil `1.13c.ini` e spec `game-dlls-1.13c-architecture.md`.
 
 Confira antes de confiar neste texto:
 
@@ -97,14 +103,15 @@ reimplementação). Leia [`SCOPE.md`](SCOPE.md), depois
 | VFS de mods (arquivos de `data\`) | ✅ | log + trace de arquivos do Wine |
 | Plugins + eventos + hook inline | ✅ | selftest dentro do `Game.exe` |
 | Falha segura (build desconhecida, `AEONIAN_DISABLE`) | ✅ | fases B/C da suíte |
-| Símbolos de código do jogo | ✅ 79 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho, painéis), com specs; 19 deles usados e verificados em jogo pelo `map-overlay` | `addresses/1.14d.ini`; suíte, fases A3 e E |
+| Símbolos de código do jogo | ✅ 108 (entrada + estado do jogo: unidades, níveis, saídas, automap, desenho, vida, personagem, DataTables, UI/HUD, 1.13c), com specs | `addresses/1.14d.ini`, `addresses/1.13c.ini`; `core_test.cpp` |
 | `on_present` (overlay) GDI + D2GL/OpenGL, `request_screenshot`, mods API | ✅ | suíte: quadro do jogo gravado e comparado |
 | Integração do D2GL (instalador, `-3dfx`, `-w`, skip_intro) | ✅ mecânica e imagem completa com o **release oficial** v1.3.3 (Wine 11.20, RX 9070 XT, 2026-10-29); o instalador avisa se o D2GL não for oficial | [`modding/D2GL.md`](modding/D2GL.md) |
 | Mod de arte visível (botões recoloridos via VFS) | ✅ | diff de 11 mil pixels no menu |
 | Modo DirectDraw (`on_present`) | ⬜ código sem teste | o Wine não o ativou |
 | Mod de mapa C1/C2 (`map-overlay`: monstros, aliados, amigos, waypoints, portais, objetivos de quest e saídas sobre o automap) | 🟡 Atos I–V, um jogador; GDI em Normal, Pesadelo e Inferno; D2GL em Normal (janela 800×600 e 1280×720); painéis; 640×480 em GDI. Objetivos pelo `OperateFn` (7 dos 24 valores vistos em jogo com o mod, Anya não alcançada); filtro de alinhamento; passagem exata pela colisão e pela regra do Ato I, aproximada e rotulada no resto; `reveal_exits` experimental e desligado; D2GL em tela cheia **não visto** | [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md); suíte, fase E; quadros gravados |
-| Estado do jogo: personagem; requisitos C3/C4 do client | ⬜ | M2.2 e "Requisitos do client" no [`ROADMAP.md`](ROADMAP.md) |
-| Windows nativo, Switch/Wine-NX | ⬜ **não testado** | — |
+| Estado do jogo: personagem; requisitos C3/C4 do client | ✅ | `build-planner` (C3), spec 1.13c multi-DLL e `1.13c.ini` (C4) |
+| Portabilidade: injeção PE para Switch (Wine-NX) | ✅ | ferramenta `tools/ae_inject_import.py` para carregar `aeonian.dll` (`AeonianBootstrap`) |
+| UI e HUD por código (M3) | ✅ | spec `game-exe-1.14d-ui-hud.md`, símbolos e controle de painéis no `hud-demo` |
 | Medição de FPS em monitores de alta taxa/4K; outros monitores e GPUs | ⬜ **não medido** (a imagem em partida foi vista com o D2GL oficial; ver D2GL.md) | — |
 | Instalação **oficial** da loja (1.14d completa) | ⬜ **não testado**: a suíte rodou na instalação reconstruída (MPQs 1.14b + `Game.exe` 1.14d) | — |
 
