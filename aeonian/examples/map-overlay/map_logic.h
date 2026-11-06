@@ -71,6 +71,8 @@ struct GameAddresses {
   uint32_t ally_list = 0;        // cabeca da lista de aliados
   uint32_t objects_base = 0;     // ponteiro para os registros de objects
   uint32_t objects_count = 0;    // quantidade de registros de objects
+  uint32_t game_type = 0;        // modo de partida (0 ou 1 = um jogador; U sec. 1)
+  uint32_t quest_flags = 0;      // QuestRecord* da dificuldade atual no cliente (U sec. 5.4)
   // Entrada de D2Common.GetUnitAlignment. O mod nao a chama: os bytes conferidos
   // atestam o layout dos stats que ele le (U sec. 7.2).
   uint32_t unit_alignment = 0;
@@ -229,6 +231,7 @@ struct Mark {
   int32_t unit_class = -1;  // monstros e objetos: linha de monstats/objects
   int32_t operate_fn = -1;  // kQuest: coluna OperateFn do registro
   int32_t ally_type = -1;   // kAlly: tipo na lista de aliados (U sec. 7.1)
+  int32_t hp_percent = -1;  // monstros/aliados: vida em % (0..100, -1 = desconhecida; U sec. 7.3)
 };
 
 struct ObjectLabel {
@@ -325,6 +328,8 @@ struct WarpRoom {
 
 struct Scan {
   bool in_game = false;
+  bool game_type_known = false;
+  uint32_t game_type = 0;  // 0 ou 1 = um jogador (U sec. 1)
   int32_t level_id = 0;  // 0 = desconhecido
   uint32_t level = 0;    // Level*
   TileRect level_rect;
@@ -397,6 +402,11 @@ enum class Alignment : uint8_t {
 // do estado 105, 0 sem esse estado ou sem stats. false se a memoria nao for legivel.
 bool ReadUnitAlignment(const MemoryView& mem, uint32_t unit, int32_t* out);
 
+// Le a vida em % (0..100) da unidade nos stats de Unit+0x5C (stat 6 hitpoints e
+// stat 7 maxhp, U sec. 7.3), sem chamar o jogo. Devolve false se a unidade nao
+// tiver o stat 6 na lista.
+bool ReadUnitHpPercent(const MemoryView& mem, uint32_t unit, int32_t* out);
+
 // mode: Unit+0x10; monstats_flags: registro de monstats +0x0C; type_flags:
 // MonsterData+0x16; is_ally: o id da unidade esta na lista de aliados. Sem o
 // alinhamento, recusa o bit 0x400 de monstats, que deu o mesmo nas classes vistas.
@@ -421,8 +431,16 @@ bool IsQuestOperateFn(uint8_t operate_fn);
 ObjectKind ClassifyObject(uint32_t object_class, uint8_t sub_class, uint8_t operate_fn);
 
 // Destino fixo pelo nivel atual das classes 298 e 342 (U sec. 5.3), -1 nas demais.
-// Na 342 ele so vale com a missao concluida, o que o mod nao tem como saber.
 int32_t FixedPortalDestination(uint32_t object_class, int32_t level_id);
+
+// Indice de palavra da missao (0..40) associado a um objetivo de quest (U sec. 5.4),
+// ou -1 se desconhecido.
+int32_t QuestOfObject(uint32_t object_class, int32_t operate_fn);
+
+// Le o bit 0 (missao concluida) da missao `quest_id` em QuestRecord* (`addr.quest_flags`,
+// U sec. 5.4). Devolve false se o ponteiro for nulo ou ilegivel.
+bool ReadQuestCompleted(const MemoryView& mem, const GameAddresses& addr, int32_t quest_id,
+                        bool* out);
 
 // Niveis de cidade (L sec. 2.8).
 bool IsTownLevel(int32_t level_id);
@@ -467,6 +485,7 @@ struct ScreenMark {
   int32_t y[4] = {};
   int32_t dest_level = -1;
   int32_t label = -1;
+  int32_t hp_percent = -1;
 };
 
 // Projeta as marcas no quadro. Marcas de um ponto fora do recorte sao

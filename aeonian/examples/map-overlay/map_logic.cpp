@@ -84,14 +84,23 @@ constexpr uint8_t kMonsterChampion = 0x04;
 constexpr uint8_t kMonsterUnique = 0x08;
 constexpr uint8_t kMonsterMinion = 0x10;
 
-// Stats da unidade e alinhamento (U sec. 7.2).
+// Stats da unidade, alinhamento e vida (U sec. 7.2 e 7.3).
+constexpr uint32_t kStatListFlags = 0x10;
+constexpr uint32_t kStatListBasePairs = 0x24;
+constexpr uint32_t kStatListBaseCount = 0x28;  // WORD
 constexpr uint32_t kStatsFirstSubList = 0x3C;
+constexpr uint32_t kStatListFullPairs = 0x48;
+constexpr uint32_t kStatListFullCount = 0x4C;  // WORD
+constexpr uint32_t kStatListFlagEx = 0x80000000u;
 constexpr uint32_t kSubListState = 0x14;
 constexpr uint32_t kSubListPairs = 0x24;
 constexpr uint32_t kSubListPairCount = 0x28;  // WORD
 constexpr uint32_t kSubListNext = 0x2C;
 constexpr uint32_t kSubListBlock = 0x2C + 4;
 constexpr uint32_t kStatPairSize = 8;  // (stat << 16, valor)
+constexpr uint32_t kStatHitPoints = 6;
+constexpr uint32_t kStatMaxHp = 7;
+constexpr int32_t kClientMonsterDefaultMaxHp = 0x8000;
 constexpr uint32_t kStateAlignment = 105;
 constexpr uint32_t kStatAlignment = 172;
 constexpr int32_t kAlignmentFriendly = 2;
@@ -102,6 +111,7 @@ constexpr uint32_t kMaxStatPairs = 1024;
 constexpr uint32_t kAllyType = 0x04;
 constexpr uint32_t kAllyId = 0x08;
 constexpr uint32_t kAllyOwner = 0x0C;
+constexpr uint32_t kAllyHpPercent = 0x1C;
 constexpr uint32_t kAllyNext = 0x30;
 constexpr uint32_t kAllyBlock = 0x34;
 constexpr uint32_t kMaxAllies = 512;
@@ -287,6 +297,7 @@ struct AllyEntry {
   uint32_t id = 0;
   uint32_t owner = 0;
   int32_t type = -1;
+  int32_t hp_percent = -1;
 };
 
 struct Tables {
@@ -294,6 +305,7 @@ struct Tables {
   uint32_t objects_count = 0;
   uint32_t player_id = 0;
   bool alignment_ok = false;
+  GameAddresses addr;
   std::vector<AllyEntry> allies;
 };
 
@@ -304,7 +316,10 @@ void ReadAllies(const MemoryView& mem, const GameAddresses& addr, Tables* tables
   for (uint32_t i = 0; node != 0 && i < kMaxAllies; ++i) {
     Block<kAllyBlock> b;
     if (!b.Load(mem, node)) break;
-    tables->allies.push_back(AllyEntry{b.U32(kAllyId), b.U32(kAllyOwner), b.I32(kAllyType)});
+    const int32_t raw_hp = b.I32(kAllyHpPercent);
+    const int32_t hp_pct = (raw_hp >= 0 && raw_hp <= 100) ? raw_hp : -1;
+    tables->allies.push_back(
+        AllyEntry{b.U32(kAllyId), b.U32(kAllyOwner), b.I32(kAllyType), hp_pct});
     node = b.U32(kAllyNext);
   }
 }
@@ -409,11 +424,22 @@ bool RememberUsedQuest(int32_t level, uint32_t object_class, bool used, ScanMemo
 
 // A predefinida vem antes da unidade: a mesma marca ganha o que so a unidade
 // conhece, o destino do portal e se o objeto ja foi usado.
-void AddObject(const Point& at, const ObjectInfo& info, uint32_t object_class, int32_t dest_level,
-               bool from_unit, bool used, ScanMemo* memo, Scan* scan) {
+void AddObject(const MemoryView& mem, const Tables& tables, const Point& at,
+               const ObjectInfo& info, uint32_t object_class, int32_t dest_level, bool from_unit,
+               bool used, ScanMemo* memo, Scan* scan) {
   const MarkKind mark_kind = MarkOfObject(info.kind);
-  if (mark_kind == MarkKind::kQuest && memo != nullptr) {
-    used = RememberUsedQuest(scan->level_id, object_class, used, memo);
+  if (mark_kind == MarkKind::kQuest) {
+    if (!used) {
+      bool completed = false;
+      const int32_t quest_id = QuestOfObject(object_class, info.operate_fn);
+      if (quest_id >= 0 && ReadQuestCompleted(mem, tables.addr, quest_id, &completed) &&
+          completed) {
+        used = true;
+      }
+    }
+    if (memo != nullptr) {
+      used = RememberUsedQuest(scan->level_id, object_class, used, memo);
+    }
   }
   for (Mark& m : scan->marks) {
     if (m.kind != mark_kind || !SameSpot(m, at)) continue;
@@ -485,8 +511,9 @@ void ScanPresets(const MemoryView& mem, const Block<kRoom2Block>& r,
     } else if (type == kTypeObject && (options.objects || options.quests)) {
       ObjectInfo info;
       if (IdentifyObject(mem, options, tables, object_class, &info)) {
-        AddObject(at, info, object_class, FixedPortalDestination(object_class, scan->level_id),
-                  false, false, options.memo, scan);
+        AddObject(mem, tables, at, info, object_class,
+                  FixedPortalDestination(object_class, scan->level_id), false, false, options.memo,
+                  scan);
       }
     }
     preset = p.U32(kPresetNext);
@@ -585,6 +612,12 @@ void ScanMonster(const MemoryView& mem, uint32_t unit, const Block<kUnitBlock>& 
   mark.x[0] = path.I32(kDynClientX);
   mark.y[0] = path.I32(kDynClientY);
   mark.unit_class = static_cast<int32_t>(monster_class);
+  int32_t hp_pct = -1;
+  if (ReadUnitHpPercent(mem, unit, &hp_pct)) {
+    mark.hp_percent = hp_pct;
+  } else if (ally != nullptr) {
+    mark.hp_percent = ally->hp_percent;
+  }
   if (unreadable) ++scan->stats.alignment_unknown;
   switch (kind) {
     case MonsterClass::kNpc:
@@ -656,7 +689,8 @@ void ScanStaticUnit(const MemoryView& mem, const Block<kUnitBlock>& u, uint32_t 
     if (mem.Read(u.U32(kUnitData) + kObjectDataDestLevel, &value, 1) && value != 0) dest = value;
   }
   // Modo != 0 diz que o objeto foi usado; modo 0 nao prova nada (U sec. 5.4).
-  AddObject(at, info, unit_class, dest, true, u.U32(kUnitMode) != 0, options.memo, scan);
+  AddObject(mem, tables, at, info, unit_class, dest, true, u.U32(kUnitMode) != 0, options.memo,
+            scan);
 }
 
 // Tabela de unidades do servidor (U sec. 2): so o que o cliente ja carregou.
@@ -1077,6 +1111,8 @@ const std::vector<AnchorSpec>& Anchors() {
       {"D2Client.RemovePetEntry", 3, &GameAddresses::ally_list, 0},
       {"D2Common.GetObjectsTxtRecord", 8, &GameAddresses::objects_count, 0},
       {"D2Common.ObjectsTxtBase", 8, &GameAddresses::objects_base, 0},
+      {"D2Client.GetGameType", 1, &GameAddresses::game_type, 0},
+      {"D2Client.GetQuestFlags", 1, &GameAddresses::quest_flags, 0},
   };
   return kAnchors;
 }
@@ -1322,6 +1358,9 @@ const char* RevealBlockReason(const MemoryView& mem, const Scan& scan) {
   if (!scan.in_game || scan.act == 0 || scan.player_room == 0 || scan.level == 0) {
     return "fora da partida";
   }
+  if (scan.game_type_known && scan.game_type > 1) {
+    return "partida nao e de um jogador";
+  }
   // Sem sala ativa o nivel perde as Room2 e as predefinidas (L sec. 3.1).
   if (scan.stats.rooms_loaded == 0) return "nivel sem sala ativa";
   // Pedir nivel de outro ato fecha o jogo (L sec. 3.1).
@@ -1400,6 +1439,137 @@ bool ReadUnitAlignment(const MemoryView& mem, uint32_t unit, int32_t* out) {
   return sub == 0;  // lista longa demais: memoria corrompida
 }
 
+namespace {
+
+void ScanHpStatPairs(const MemoryView& mem, uint32_t pairs, uint16_t count, bool* has_hp,
+                     int32_t* hp, bool* has_maxhp, int32_t* maxhp) {
+  if (pairs == 0 || count == 0 || count > kMaxStatPairs) return;
+  for (uint32_t k = 0; k < count; ++k) {
+    uint32_t key = 0;
+    int32_t val = 0;
+    const uint32_t entry = pairs + k * kStatPairSize;
+    if (!ReadU32(mem, entry, &key) || !ReadI32(mem, entry + 4, &val)) break;
+    if ((key & 0xFFFFu) != 0) continue;
+    const uint32_t stat_id = key >> 16;
+    if (stat_id == kStatHitPoints) {
+      *has_hp = true;
+      *hp = val;
+    } else if (stat_id == kStatMaxHp) {
+      *has_maxhp = true;
+      *maxhp = val;
+    }
+  }
+}
+
+}  // namespace
+
+bool ReadUnitHpPercent(const MemoryView& mem, uint32_t unit, int32_t* out) {
+  *out = -1;
+  uint32_t list = 0;
+  if (!ReadU32(mem, unit + kUnitStats, &list) || list == 0) return false;
+  uint32_t flags = 0;
+  uint32_t base_pairs = 0;
+  uint16_t base_count = 0;
+  if (!ReadU32(mem, list + kStatListFlags, &flags) ||
+      !ReadU32(mem, list + kStatListBasePairs, &base_pairs) ||
+      ! mem.Read(list + kStatListBaseCount, &base_count, sizeof(base_count))) {
+    return false;
+  }
+  bool has_hp = false;
+  int32_t hp = 0;
+  bool has_maxhp = false;
+  int32_t maxhp = 0;
+  ScanHpStatPairs(mem, base_pairs, base_count, &has_hp, &hp, &has_maxhp, &maxhp);
+  if ((flags & kStatListFlagEx) != 0) {
+    uint32_t full_pairs = 0;
+    uint16_t full_count = 0;
+    if (ReadU32(mem, list + kStatListFullPairs, &full_pairs) &&
+        mem.Read(list + kStatListFullCount, &full_count, sizeof(full_count))) {
+      ScanHpStatPairs(mem, full_pairs, full_count, &has_hp, &hp, &has_maxhp, &maxhp);
+    }
+  }
+  if (!has_hp) return false;
+  if (hp <= 0) {
+    *out = 0;
+    return true;
+  }
+  const int32_t denom = (has_maxhp && maxhp > 0) ? maxhp : kClientMonsterDefaultMaxHp;
+  const int64_t pct = (static_cast<int64_t>(hp) * 100) / denom;
+  *out = static_cast<int32_t>(std::clamp<int64_t>(pct, 1, 100));
+  return true;
+}
+
+int32_t QuestOfObject(uint32_t object_class, int32_t operate_fn) {
+  if (object_class == kObjectClassQuestCage) return 36;
+  if (object_class == kObjectClassQuestPlaceholder || object_class == kObjectClassQuestUnit) {
+    return 37;
+  }
+  switch (operate_fn) {
+    case 21:
+      return 3;
+    case 9:
+    case 10:
+    case 12:
+      return 4;
+    case 6:
+      return 6;
+    case 39:
+      return 9;
+    case 40:
+      return 10;
+    case 24:
+    case 41:
+      return 11;
+    case 42:
+      return 12;
+    case 25:
+      return 14;
+    case 28:
+      return 17;
+    case 57:
+    case 58:
+    case 59:
+      return 18;
+    case 31:
+      return 19;
+    case 53:
+      return 21;
+    case 52:
+    case 54:
+    case 55:
+    case 56:
+      return 26;
+    case 49:
+      return 27;
+    case 67:
+      return 37;
+    case 65:
+      return 39;
+    default:
+      return -1;
+  }
+}
+
+bool ReadQuestCompleted(const MemoryView& mem, const GameAddresses& addr, int32_t quest_id,
+                        bool* out) {
+  *out = false;
+  if (quest_id < 0 || addr.quest_flags == 0) return false;
+  uint32_t record = 0;
+  uint32_t buf = 0;
+  uint32_t size = 0;
+  if (!ReadU32(mem, addr.quest_flags, &record) || record == 0 ||
+      !ReadU32(mem, record + 0x00, &buf) || buf == 0 ||
+      !ReadU32(mem, record + 0x04, &size) || size > 0x200) {
+    return false;
+  }
+  const uint32_t byte_offset = static_cast<uint32_t>(quest_id) * 2u;
+  if (byte_offset + 2u > size) return false;
+  uint16_t word = 0;
+  if (!mem.Read(buf + byte_offset, &word, sizeof(word))) return false;
+  *out = (word & 0x0001u) != 0;
+  return true;
+}
+
 void ScanGame(const MemoryView& mem, const GameAddresses& addr, const ScanOptions& options,
               Scan* out) {
   *out = Scan{};
@@ -1412,6 +1582,7 @@ void ScanGame(const MemoryView& mem, const GameAddresses& addr, const ScanOption
   Block<kUnitBlock> unit;
   if (!unit.Load(mem, player) || unit.U32(kUnitType) != kTypePlayer) return;
   out->in_game = true;
+  out->game_type_known = ReadU32(mem, addr.game_type, &out->game_type);
   out->act_index = unit.I32(kUnitActIndex);
   Block<kDynBlock> path;
   if (!path.Load(mem, unit.U32(kUnitPath))) return;
@@ -1432,6 +1603,7 @@ void ScanGame(const MemoryView& mem, const GameAddresses& addr, const ScanOption
   Tables tables;
   tables.player_id = unit.U32(kUnitId);
   tables.alignment_ok = addr.unit_alignment != 0;
+  tables.addr = addr;
   ReadAllies(mem, addr, &tables);
   if (ReadU32(mem, addr.objects_base, &tables.objects_base)) {
     ReadU32(mem, addr.objects_count, &tables.objects_count);
@@ -1608,6 +1780,7 @@ void ProjectMarks(const std::vector<Mark>& marks, const AutomapView& view,
     s.used = m.used;
     s.dest_level = m.dest_level;
     s.label = m.label;
+    s.hp_percent = m.hp_percent;
     int32_t min_x = 0;
     int32_t min_y = 0;
     int32_t max_x = 0;

@@ -109,4 +109,30 @@ std::optional<std::string> Vfs::Resolve(std::string_view requested,
   return std::nullopt;
 }
 
+namespace {
+
+bool IsExcelExtRelativePath(std::string_view rel_data_path,
+                            std::string_view ext) {
+  const std::string lower = ToLowerAscii(ToBackslashes(rel_data_path));
+  constexpr std::string_view kPrefix = "global\\excel\\";
+  if (lower.size() <= kPrefix.size() + ext.size()) return false;
+  if (std::string_view(lower).substr(0, kPrefix.size()) != kPrefix) {
+    return false;
+  }
+  const std::string_view name =
+      std::string_view(lower).substr(kPrefix.size());
+  if (name.find('\\') != std::string_view::npos) return false;
+  return name.substr(name.size() - ext.size()) == ext;
+}
+
+}  // namespace
+
+bool IsExcelBinRelativePath(std::string_view rel_data_path) {
+  return IsExcelExtRelativePath(rel_data_path, ".bin");
+}
+
+bool IsExcelTxtRelativePath(std::string_view rel_data_path) {
+  return IsExcelExtRelativePath(rel_data_path, ".txt");
+}
+
 }  // namespace aeonian

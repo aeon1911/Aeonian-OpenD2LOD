@@ -172,6 +172,10 @@ void Runtime::LoadConfig() {
   config_.force_direct = direct == "on"    ? Config::Direct::kOn
                          : direct == "off" ? Config::Direct::kOff
                                            : Config::Direct::kAuto;
+  std::string txt = ToLowerAscii(ini.GetOr("core", "force_txt", "auto"));
+  config_.force_txt = txt == "on"    ? Config::Direct::kOn
+                      : txt == "off" ? Config::Direct::kOff
+                                     : Config::Direct::kAuto;
   config_.allow_unknown_build = ini.GetBool("core", "allow_unknown_build", false);
   config_.trace_files = ini.GetBool("core", "trace_files", false);
   config_.extra_args = SplitList(ini.GetOr("core", "extra_args", ""));
@@ -308,6 +312,15 @@ void Runtime::DiscoverMods() {
     roots.push_back(ModRoot{m.id, m.dir});
   }
   if (!roots.empty()) {
+    // Limpa os `.bin` temporarios de uma sessao anterior com `-txt` e coloca o
+    // cache do motor na frente para que `D2Common.CompileTxtFile` releia o
+    // `.bin` recem-compilado sem tocar na pasta do jogo.
+    const std::string excel_cache =
+        aeonian_dir_ + "\\cache\\data\\global\\excel";
+    for (const std::string& old_bin : ListDir(excel_cache, "*.bin", false)) {
+      DeleteFileA((excel_cache + "\\" + old_bin).c_str());
+    }
+    roots.insert(roots.begin(), ModRoot{"_txt_cache", aeonian_dir_ + "\\cache"});
     // Consulta so o indice em memoria: nenhuma chamada ao SO por abertura.
     vfs_ = std::make_unique<Vfs>(
         game_dir_, std::move(roots),
@@ -403,6 +416,15 @@ bool Runtime::ShouldForceDirect() const {
   return false;
 }
 
+bool Runtime::ShouldForceTxt() const {
+  switch (config_.force_txt) {
+    case Config::Direct::kOn: return true;
+    case Config::Direct::kOff: return false;
+    case Config::Direct::kAuto: break;
+  }
+  return index_.HasExcelTxt();
+}
+
 // O D2GL e um glide3x.dll (OpenGL) que o jogo carrega com -3dfx. "auto" o usa
 // quando ele esta instalado na pasta do jogo.
 // A DLL e o wrapper do D2GL? (o D2GL grava o nome "d2gl.mpq" em ambos.)
@@ -476,6 +498,7 @@ const char* Runtime::CommandLine(const char* original) {
       extra.insert(extra.end(), m.args.begin(), m.args.end());
     }
     if (ShouldForceDirect()) extra.emplace_back("-direct");
+    if (ShouldForceTxt()) extra.emplace_back("-txt");
     command_line_ = BuildCommandLine(original != nullptr ? original : "", extra, remove);
     if (command_line_ != (original != nullptr ? original : "")) {
       log::Writef(log::Level::kInfo, "linha de comando: %s",
@@ -490,16 +513,17 @@ bool Runtime::RedirectPath(const char* path, std::string* redirected) {
   std::optional<std::string> rel = vfs_->RelativeDataPath(path);
   if (!rel) return false;
   std::string owner;
-  std::optional<std::string> mapped = vfs_->Resolve(path, &owner);
-
+  std::optional<std::string> mapped;
   bool first_time = false;
+  EnterCriticalSection(&trace_lock_);
+  mapped = vfs_->Resolve(path, &owner);
+  if (mapped) *mapped = index_.ResolveCase(*mapped);
   if (mapped || config_.trace_files) {
-    EnterCriticalSection(&trace_lock_);
     if (seen_paths_.size() < kMaxTrackedPaths) {
       first_time = seen_paths_.insert(ToLowerAscii(*rel)).second;
     }
-    LeaveCriticalSection(&trace_lock_);
   }
+  LeaveCriticalSection(&trace_lock_);
   if (first_time) {
     if (mapped) {
       log::Writef(log::Level::kInfo, "vfs: data\\%s -> mod '%s'", rel->c_str(),
@@ -511,6 +535,32 @@ bool Runtime::RedirectPath(const char* path, std::string* redirected) {
   if (!mapped) return false;
   redirects_.fetch_add(1, std::memory_order_relaxed);
   *redirected = std::move(*mapped);
+  return true;
+}
+
+bool Runtime::RedirectWritePath(const char* path, std::string* redirected) {
+  if (!vfs_ || path == nullptr || redirected == nullptr) return false;
+  std::optional<std::string> rel = vfs_->RelativeDataPath(path);
+  if (!rel || !IsExcelBinRelativePath(*rel)) return false;
+
+  const std::string cache_root = aeonian_dir_ + "\\cache";
+  const std::string cache_data = cache_root + "\\data";
+  const std::string cache_global = cache_data + "\\global";
+  const std::string cache_excel = cache_global + "\\excel";
+  CreateDirectoryA(cache_root.c_str(), nullptr);
+  CreateDirectoryA(cache_data.c_str(), nullptr);
+  CreateDirectoryA(cache_global.c_str(), nullptr);
+  CreateDirectoryA(cache_excel.c_str(), nullptr);
+
+  std::string target = cache_data + "\\" + ToLowerAscii(*rel);
+  EnterCriticalSection(&trace_lock_);
+  index_.AddFile(target);
+  LeaveCriticalSection(&trace_lock_);
+
+  log::Writef(log::Level::kInfo, "vfs: escrita data\\%s -> cache '%s'",
+              rel->c_str(), target.c_str());
+  redirects_.fetch_add(1, std::memory_order_relaxed);
+  *redirected = std::move(target);
   return true;
 }
 

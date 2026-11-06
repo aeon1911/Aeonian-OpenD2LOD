@@ -25,6 +25,7 @@
 
 #include <StormLib.h>
 
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -45,8 +46,18 @@ fs::path ToNativePath(const char* mpq_path) {
     return fs::path(normalized);
 }
 
+char NormChar(char c) {
+    if (c == '/') return '\\';
+    return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+}
+
 bool HasPrefix(const std::string& value, const char* prefix) {
-    return std::strncmp(value.c_str(), prefix, std::strlen(prefix)) == 0;
+    const std::size_t n = std::strlen(prefix);
+    if (value.size() < n) return false;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (NormChar(value[i]) != NormChar(prefix[i])) return false;
+    }
+    return true;
 }
 
 int CmdList(HANDLE mpq) {

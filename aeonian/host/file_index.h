@@ -28,7 +28,7 @@
 
 #include <cstddef>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 
 namespace aeonian {
 
@@ -38,13 +38,23 @@ class FileIndex {
   // Devolve quantos arquivos foram adicionados.
   size_t AddTree(const std::string& dir);
 
+  // Registra um unico arquivo gerado em runtime (ex.: `.bin` compilado por `-txt`).
+  void AddFile(const std::string& path);
+
   // `path` completo; a comparacao ignora maiusculas (como o Windows).
   bool Contains(const std::string& path) const;
+
+  // Devolve o caminho com a caixa exata encontrada no disco (ou `path` se ausente).
+  std::string ResolveCase(const std::string& path) const;
+
+  // Algum mod indexado trouxe `data\global\excel\*.txt`?
+  bool HasExcelTxt() const { return has_excel_txt_; }
 
   size_t size() const { return files_.size(); }
 
  private:
-  std::unordered_set<std::string> files_;  // caminhos completos em minusculas
+  std::unordered_map<std::string, std::string> files_;  // minusculas -> caixa real
+  bool has_excel_txt_ = false;
 };
 
 }  // namespace aeonian

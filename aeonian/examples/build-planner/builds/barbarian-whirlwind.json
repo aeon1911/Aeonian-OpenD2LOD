@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Barbarian Whirlwind",
+  "class": "barbarian",
+  "auto_prereqs": true,
+  "attributes": {
+    "strength": 180,
+    "dexterity": 136,
+    "vitality": 300,
+    "energy": 10,
+    "overflow": "vitality"
+  },
+  "skills": [
+    { "id": 127, "level": 20 },
+    { "id": 138, "level": 1 },
+    { "id": 149, "level": 20 },
+    { "id": 151, "level": 20 },
+    { "id": 145, "level": 1 },
+    { "id": 153, "level": 5 },
+    { "id": 155, "level": 1 }
+  ]
+}
+

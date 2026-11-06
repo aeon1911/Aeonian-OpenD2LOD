@@ -12,10 +12,10 @@ cheia ou minimapa), ele desenha por cima:
 | losango dourado | único |
 | losango laranja com anel | superúnico |
 | quadrado verde-claro pequeno | aliado: mercenário ou invocação (nunca conta como hostil) |
-| anel verde-pálido pequeno | amigo fora da lista de aliados: classes 359 e 522 da spec, e a 534 vista aqui (nunca conta como hostil) |
+| anel verde-pálido pequeno | amigo fora da lista de aliados: classes 359, 522 e 534 da spec (nunca conta como hostil) |
 | anel verde | NPC |
 | losango magenta em moldura + `Objetivo` | objetivo de quest, pela coluna `OperateFn` do jogo |
-| moldura cinza + `Objetivo (usado)` | objetivo já operado (modo ≠ 0). **Sem** "(usado)" não quer dizer que a missão esteja pendente |
+| moldura cinza + `Objetivo (usado)` | objetivo já operado (modo ≠ 0) ou cuja missão já consta concluída em `QuestRecord` (`[0x7C0D43]`) |
 | quadrado ciano + `WP` | waypoint (coluna do jogo, qualquer ato) |
 | sala hachurada ciano + `WP (?)` | sala do waypoint ainda não carregada |
 | anel azul + `Portal » nível` | portal da cidade (classe 59) e o destino dele |
@@ -75,7 +75,7 @@ e [`addresses/1.14d.ini`](../../aeonian/addresses/1.14d.ini). Código:
 `aeonian/examples/map-overlay/` (lógica portável em `map_logic.*`, testada no host
 por `ae_map_overlay_test`).
 
-- **Símbolos.** O mod resolve 19 símbolos **por nome** (`resolve_symbol`, que
+- **Símbolos.** O mod resolve 21 símbolos **por nome** (`resolve_symbol`, que
   confere os bytes) e lê o endereço de cada global de dentro dos bytes
   verificados da âncora (o deslocamento que a descrição do INI dá), sempre com
   `read_original`: funciona mesmo se outro mod já desviou a função. Nenhum
@@ -114,8 +114,9 @@ por `ae_map_overlay_test`).
   predefinida (sala carregada) e a unidade. Mais as classes que a spec aponta fora do
   conjunto: 460, a predefinida que marca o lugar da 558 (mesma marca), e 473, as gaiolas.
   Waypoint e portal vêm antes, e os falsos positivos da spec (44, 45, 62–64, 66, 69–73)
-  ficam de fora. O mod só diz que o objeto foi usado (modo ≠ 0, lembrado até o mapa mudar):
-  modo 0 **não** prova que a missão está pendente, e por isso ele nunca diz "pendente".
+  ficam de fora. O mod marca que o objeto foi usado quando `modo ≠ 0` (lembrado até o mapa
+  mudar) ou quando o bit 0 (concluída) da missão correspondente está ligado no `QuestRecord`
+  do cliente (`[0x7C0D43]`, âncora `D2Client.GetQuestFlags`).
 - **Saídas por warp.** Uma sala tem o warp *n* se tiver o bit `0x10 << n` com `Vis[n] ≠ 0` e
   `Warp[n] ≠ −1`. As regras são as mesmas em todos os atos e tipos de nível.
 - **Passagens abertas** (`Vis[n] ≠ 0`, `Warp[n] = −1`, retângulos dos níveis encostados;
@@ -187,6 +188,7 @@ nível de outro ato fecha o jogo, e nível sem sala ativa perde as `Room2` e as 
 Antes de cada chamada o mod confere, só lendo memória, e recusa com aviso no log se algo não
 bater:
 
+- a partida é de um jogador (`[0x7A0610] <= 1`, âncora `D2Client.GetGameType`);
 - a sala do jogador (`Room1+0x2C`) está no ato do cliente, e `Act+0x14` é o ato do jogador;
 - o id do nível pertence a esse ato, e o `Level*` está na corrente de `DrlgAct+0x47C`, cujo
   `DrlgAct+0x46C` volta ao mesmo `Act*`;
@@ -197,8 +199,7 @@ bater:
 
 - Testado só em Normal, um jogador, em sessões curtas: a análise chamou as mesmas funções
   nos Atos I–V, e aqui o mod as exercitou nos níveis de "Validação".
-- **Não use em multijogador**: lá o servidor é remoto, esse caminho não foi exercitado e
-  o mod não sabe detectar o modo de jogo.
+- **Recusado automaticamente em multijogador** (`[0x7A0610] > 1`).
 - Não testado: Pesadelo e Inferno, sessões longas, efeito nos arquivos `.ma0`/`.map` do
   personagem e a corrida com um pedido do servidor para a mesma sala.
 
@@ -353,19 +354,16 @@ lacaios nem em superúnicos.
 
 ## `TODO(RE)` que dependem de nova análise
 
-1. Objetivos: 13 dos 24 valores de `OperateFn` só têm o tratador e a predefinida; de onde o
-   cliente tira o estado das missões, para saber o que está pendente ([spec de unidades
-   §5.4](../specs/game-exe-1.14d-units.md)); o clique na classe 357, que aqui mudou o modo.
+1. Objetivos: 13 dos 24 valores de `OperateFn` só têm o tratador e a predefinida; o clique na
+   classe 357, que aqui mudou o modo.
 2. Passagens: posição exata sem ativar sala fora do Ato I; a passagem 107|108, calculada aqui e
    não atravessada; a regra nas bordas do Ato I não medidas (1|2, 7|26, 26|27); demais bits da
    colisão; frestas estreitas como a de 1|2.
 3. Filtro: alinhamento 1 e monstro convertido nunca vistos vivos; 529 das 626 classes que
-   passam nos bits não foram vistas vivas. Classe 534, amiga e fora da spec.
+   passam nos bits não foram vistas vivas.
 4. Portais: classes 100 e 377; outros portais vermelhos.
 5. Aliados: esqueleto, revivido e o que muda com outro jogador na partida.
 6. Índices de UI não abertos (cubo, troca com NPC, jogadores, chat).
 7. Encaixe do D2GL: hoje é o modelo observado, sem spec, e não foi visto em 640×480.
-8. `reveal_exits`: multijogador, sessões longas, efeito nos arquivos `.ma0`/`.map` e a
-   corrida com um pedido do servidor para a mesma sala.
-9. Como detectar o modo de jogo (um jogador ou multijogador), para o mod poder recusar
-   `reveal_exits` sozinho.
+8. `reveal_exits`: sessões longas, efeito nos arquivos `.ma0`/`.map` e a corrida com um
+   pedido do servidor para a mesma sala.

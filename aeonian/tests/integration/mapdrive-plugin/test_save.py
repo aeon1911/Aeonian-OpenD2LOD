@@ -88,6 +88,10 @@ def main():
     parser.add_argument("--act", type=int, default=1, help="1 a 5")
     parser.add_argument("--difficulty", type=int, default=0, help="0 Normal, 1 Pesadelo, 2 Inferno")
     parser.add_argument("--level", type=int, default=90)
+    parser.add_argument("--statpts", type=int, default=0, help="pontos de atributo livres (stat 4)")
+    parser.add_argument("--newskills", type=int, default=0, help="pontos de habilidade livres (stat 5)")
+    parser.add_argument("--keep-progression", action="store_true",
+                        help="nao altera OFF_PROGRESSION (entra direto em Normal sem menu de dificuldade)")
     parser.add_argument("--sorceress", action="store_true",
                         help="troca a classe e da Teletransporte (F1) e Hidra (F2)")
     parser.add_argument("--merc", action="store_true", help="contrata um mercenario")
@@ -104,7 +108,8 @@ def main():
     if data[OFF_STATS:OFF_STATS + 2] != b"gf":
         sys.exit("secao de atributos nao encontrada")
 
-    data[OFF_PROGRESSION] = 15  # todas as dificuldades liberadas
+    if not args.keep_progression:
+        data[OFF_PROGRESSION] = 15  # todas as dificuldades liberadas
     data[OFF_LEVEL] = args.level
     for d in range(3):
         data[OFF_DIFFICULTY + d] = 0
@@ -121,9 +126,14 @@ def main():
             struct.pack_into("<H", data, OFF_QUESTS + 10 + d * 96 + word * 2, 1)
 
     skills = OFF_STATS + 2 + data[OFF_STATS + 2:].index(b"if")
-    stats = pack_stats({0: 200, 1: 1000, 2: 200, 3: 1000, 6: 8000 << 8, 7: 8000 << 8,
-                        8: 8000 << 8, 9: 8000 << 8, 10: 2000 << 8, 11: 2000 << 8,
-                        12: args.level, 13: 1764543065})
+    stat_dict = {0: 150, 1: 1000, 2: 100, 3: 1000, 6: 8000 << 8, 7: 8000 << 8,
+                 8: 8000 << 8, 9: 8000 << 8, 10: 2000 << 8, 11: 2000 << 8,
+                 12: args.level, 13: 1764543065}
+    if args.statpts > 0:
+        stat_dict[4] = args.statpts
+    if args.newskills > 0:
+        stat_dict[5] = args.newskills
+    stats = pack_stats(stat_dict)
     data[OFF_STATS + 2:skills] = stats
     skills = OFF_STATS + 2 + len(stats)
 

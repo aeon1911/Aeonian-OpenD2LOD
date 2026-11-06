@@ -4,6 +4,75 @@
 > A fase de reimplementação foi descontinuada e **apagada** (código, tags e
 > documentação). Não a retome.
 
+## Comece aqui
+
+**O projeto:** um devkit que roda **dentro** do `Game.exe` 1.14d original, para quem quiser
+mudar HUD, classes, habilidades, sprites e mapas. É o que o Median XL fez com engenharia
+reversa, só que aberto e para o jogo vanilla. Não é um jogo novo.
+
+**Situação em 2026-10-31:** o trabalho está na `main`, publicado até `dc50244`. Nada ficou pela
+metade e nenhuma sessão está rodando. O primeiro mod de teste (`map-overlay`, C1/C2) está
+pronto nos Atos I a V, com as ressalvas de [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md).
+
+Confira antes de confiar neste texto:
+
+```bash
+git status -sb && git branch -a && git log --oneline -5
+```
+
+### Regras que já custaram caro ao dono
+
+1. **Não reescreva o jogo nem copie assets.** Duas IAs fizeram isso e o dono perdeu tempo e
+   dinheiro. Se a tarefa parecer pedir isso, pare e pergunte.
+2. **Uma fase por sessão.** Declare `[ANÁLISE]` ou `[IMPLEMENTAÇÃO]` no início
+   ([`CLEANROOM_PROTOCOL.md`](CLEANROOM_PROTOCOL.md)). Na análise não há código em `aeonian/`,
+   exceto o banco de endereços. Na implementação não se abre o `Game.exe`, nem as transcrições
+   ou evidências da análise. Se faltar um fato, deixe `TODO(RE)` e peça uma nova análise, em
+   **outra** sessão.
+3. **O jogo roda invisível e mudo.** Nenhuma janela no monitor e nenhum som: o dono usa a mesma
+   máquina. Veja "Rodar o jogo fora da suíte", abaixo.
+4. **Commit e push só quando o dono pedir.** Ele trabalha em lotes grandes, com testes no fim,
+   e responde "Commitar" quando aprova. Responda em português.
+5. **Separe o que foi validado no jogo do que só compilou**, sem arredondar para "funciona".
+
+### O que fazer agora
+
+Se o dono não disser o que quer, pergunte; esta é a ordem recomendada.
+
+| # | Tarefa | Fase | Comece por | Pronto quando |
+|---|---|---|---|---|
+| 1 | **Personagem** (M2.2): atributos, pontos livres, habilidades e criação | Análise | criar `docs/specs/game-exe-1.14d-character.md` | spec e símbolos com bytes conferidos, confirmados em execução |
+| 2 | **Planejador de builds** (C3) | Implementação, depois da 1 | linha C3 do [`ROADMAP.md`](ROADMAP.md) | aplica um plano a um personagem novo, no jogo real, sem editar saves |
+| 3 | **Sobras do mapa**, a começar pelo estado das missões no cliente | Análise, depois implementação | "`TODO(RE)`" em [`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md) | o mod diz o que está pendente, não só o que foi usado |
+| 4 | **HUD e classes** (M3, M4): o objetivo maior do devkit | Análise por painel ou sistema | [`ROADMAP.md`](ROADMAP.md) | spec e teste de integração para cada ponto tocado |
+
+**Dependem do dono, não comece sozinho:** a estratégia do C4 (Project Diablo 2 e Median XL, base
+1.13c, é o maior risco do roadmap) e o teste em hardware dele ([`FINAL_TEST.md`](FINAL_TEST.md)).
+
+### Como uma rodada costuma andar
+
+1. Sessão de análise: escreve as specs e o INI, sem commit.
+2. O dono aprova e o commit entra (`docs(specs): ...`).
+3. **Sessão nova** de implementação, só com as specs e o INI. Testes no fim do lote.
+4. Atualize `MAP_OVERLAY.md` (ou o documento do mod), `ROADMAP.md` e este arquivo. O dono
+   aprova e o commit entra (`feat(...): ...`).
+
+Quem coordena sessões e já escreveu código em `aeonian/` não examina o binário: delega a análise.
+
+### Onde está cada coisa
+
+| Procurando | Veja |
+|---|---|
+| Escopo, arquitetura, protocolo | [`SCOPE.md`](SCOPE.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`CLEANROOM_PROTOCOL.md`](CLEANROOM_PROTOCOL.md) |
+| Fatos do `Game.exe` | `docs/specs/game-exe-1.14d-*.md` e `aeonian/addresses/1.14d.ini` |
+| API de plugins | [`modding/PLUGIN_API.md`](modding/PLUGIN_API.md), `aeonian/include/aeonian/api.h` |
+| Mod de exemplo mais completo | `aeonian/examples/map-overlay/` |
+| Plugin que dirige o jogo nos testes | `aeonian/tests/integration/mapdrive-plugin/` (comandos no cabeçalho de `mapdrive.cpp`) |
+| Modelos antigos de prompt | `ai/`: se divergirem, valem `AGENTS.md` e este arquivo |
+
+As evidências das rodadas ficaram em `/tmp` (tmpfs) e somem ao reiniciar. O que vale fica na
+matriz de validação do `MAP_OVERLAY.md`.
+
 ## O que o projeto é agora
 
 Ponto de entrada de mods para o **Game.exe 1.14d original** (não é
@@ -45,24 +114,51 @@ Toolchain: a **única validada** é um `llvm-mingw` (release `20261020`, variant
 `msvcrt`, extraído fora do repo) apontado por `AEONIAN_MINGW_ROOT`. O
 `g++-mingw-w64-i686` do sistema deve servir, mas **não foi testado**.
 
-```bash
-# núcleo portável + testes unitários (host): core e map_overlay
-cmake -S . -B build/host -G Ninja && cmake --build build/host && ctest --test-dir build/host
+Comandos prontos para **esta máquina**, a partir da raiz do repositório, em `bash`:
 
-# DLLs que rodam no jogo (i686)
-export AEONIAN_MINGW_ROOT=/caminho/do/llvm-mingw      # ou deixe vazio e use o mingw do PATH
+```bash
+# núcleo portável + testes unitários (host): core e map_overlay. AEONIAN_BUILD_TOOLS gera o
+# ae_mpq_extract usado pela suíte; o build/host desta máquina já o tem (na primeira vez, baixa o StormLib)
+cmake -S . -B build/host -G Ninja -DAEONIAN_BUILD_TOOLS=ON && cmake --build build/host && ctest --test-dir build/host
+
+# DLLs que rodam no jogo (i686): 7 DLLs em build/win32
+export AEONIAN_MINGW_ROOT=/mnt/STEAM/Projetos/devkit-tools/llvm-mingw
 cmake -S aeonian -B build/win32 -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain-i686-mingw.cmake
 cmake --build build/win32
 
-# integração: roda o Game.exe 1.14d REAL no Wine numa cópia-espelho (não toca na sua instalação)
-AEONIAN_D2_DIR=/caminho/d2-114d \
-AEONIAN_EXTRA_DLL_DIR=/caminho/com/binkw32+SmackW32+ijl11 \   # só se a instalação não os tiver
-AEONIAN_MPQ_EXTRACT=/caminho/ae_mpq_extract \                 # opcional: habilita a fase de arte/VFS
-AEONIAN_D2GL_DIR=/pasta/com/glide3x.dll+d2gl.mpq \            # opcional: habilita a fase D2GL
-AEONIAN_D2_LNG=/caminho/D2.LNG \                              # opcional: fase E (partida real; copiado só para o espelho)
+# integração: roda o Game.exe 1.14d REAL no Wine numa cópia-espelho, invisível e mudo.
+# A pasta de trabalho fica no disco: em /tmp a suíte já encheu o tmpfs. Apague-a ao terminar.
+AEONIAN_HIDDEN=1 \
+AEONIAN_WORK_DIR=/mnt/STEAM/Projetos/aeonian-tmp-suite \
+AEONIAN_D2_DIR=/mnt/STEAM/Projetos/d2-114d \
+AEONIAN_EXTRA_DLL_DIR="/mnt/STEAM/Diablo II LoD 1.13c -D2SE" \
+AEONIAN_MPQ_EXTRACT=$PWD/build/host/tools/mpq_extractor/ae_mpq_extract \
+AEONIAN_D2GL_DIR=/mnt/STEAM/Projetos/devkit-tools/d2gl-1.3.3 \
+AEONIAN_D2_LNG="/mnt/STEAM/Diablo II LoD 1.13c -D2SE/D2.LNG" \
 bash aeonian/tests/integration/run_wine_smoke.sh
 ```
+
+O que cada variável faz: `AEONIAN_EXTRA_DLL_DIR` traz `binkw32`, `SmackW32` e `ijl11`, se a instalação
+não os tiver; `AEONIAN_MPQ_EXTRACT` habilita a fase de arte/VFS; `AEONIAN_D2GL_DIR` habilita a fase
+D2GL; `AEONIAN_D2_LNG` habilita a fase E (partida real) e é copiado só para o espelho.
+
+Em outra máquina, troque os caminhos. O `llvm-mingw` é a única toolchain validada.
+
+### Rodar o jogo fora da suíte
+
+```bash
+gamescope --backend headless -W 1280 -H 720 -- env -u WAYLAND_DISPLAY \
+  WINEPREFIX=/mnt/STEAM/Projetos/aeonian-tmp-<algo>/prefix \
+  WINEDLLOVERRIDES="winemenubuilder.exe=d;winepulse.drv,winealsa.drv,wineoss.drv=d" \
+  wine Game.exe
+```
+
+- O prefixo de teste precisa de `HKCU\Software\Wine\Drivers\Audio=""`. Nunca defina
+  `WINEDLLOVERRIDES` sem manter os drivers de áudio desligados: foi assim que o som vazou.
+- Rode num espelho da instalação, nunca em `d2-114d`, e encerre com `wineserver -k`.
+- Confirme o silêncio com `pactl list sink-inputs` durante a execução: zero fluxos do jogo.
+- Dentro do gamescope não há gerenciador de janelas: ache a janela com `XQueryTree`.
 
 A suíte exige display e leva ~3 min (~6 min com as fases E e E2). Com **`AEONIAN_HIDDEN=1`** ela roda dentro
 de um `gamescope --backend headless`: **nenhuma janela aparece no monitor** e o
@@ -87,9 +183,13 @@ do jogo): **não captura a tela**.
 - Docker aqui não é utilizável sem root; por isso o llvm-mingw.
 - **Ferramentas (host CachyOS, desde 2026-10-29)** em `/mnt/STEAM/Projetos/devkit-tools/`,
   baixadas dos releases oficiais com SHA-256 conferido: `llvm-mingw/` (20261020,
-  `AEONIAN_MINGW_ROOT`), `ghidra/` (12.2) + `jdk/` (Temurin 21), `gh/` (GitHub CLI)
+  `AEONIAN_MINGW_ROOT`), `ghidra/` (12.2) + `jdk/` (Temurin 21), `gh/` (GitHub CLI,
+  já autenticado; o binário está em `gh/bin/`)
   e `d2gl-1.3.3/` (o **D2GL oficial**, use-o em `AEONIAN_D2GL_DIR`). O D2GL da
   pasta 1.13c/D2SE **não** é o oficial e deixa o jogo preto no Wine.
+- **O Ghidra 12.2 precisa de Java 25 e o `jdk/` é 21**: ele não abre com o que está lá. As
+  análises até aqui usaram `objdump`, scripts e execução no jogo. Para usar o Ghidra, peça
+  autorização e baixe você mesmo um JDK 25 do release oficial: o dono prefere não fazer isso.
 - Neste host: `cmake -S aeonian -B build/win32 ...` compila sem avisos e a suíte
   dá **126/126** com o D2GL oficial, `AEONIAN_MPQ_EXTRACT`, `AEONIAN_D2_LNG` e
   `AEONIAN_HIDDEN=1`, em 2026-10-31 (sem as fases E e E2, que precisam do `D2.LNG`,
@@ -166,16 +266,16 @@ do jogo): **não captura a tela**.
    Ninja 1.11, g++ 13, Python 3.12): `wine`, `cmake`, `ninja-build`, `g++`, `python3`
    e, opcionalmente, `x11-utils` (`xwininfo`, só para inspecionar a janela do jogo).
 2. **Toolchain i686**: obtenha o `llvm-mingw` (variante `msvcrt`, alvo i686) na página
-   de releases do `mstorsjo/llvm-mingw` e exporte `AEONIAN_MINGW_ROOT`. O dono prefere
-   baixar por conta própria; **peça antes de baixar qualquer coisa**.
-3. **Mudou o ponto de montagem do disco `STEAM`?** O worktree guarda caminhos
-   absolutos. No checkout principal, rode
-   `git worktree repair <novo-caminho>/.claude/worktrees/diablo2-lod-open-source-a87cb5`.
+   de releases do `mstorsjo/llvm-mingw` e exporte `AEONIAN_MINGW_ROOT`. O dono quer que a
+   IA baixe as ferramentas ("abra você o navegador e baixe você"), mas **peça antes de
+   baixar qualquer coisa**.
+3. **Mudou o ponto de montagem do disco `STEAM`?** Atualize os caminhos dos comandos
+   deste arquivo. Não há worktrees: só o checkout principal, na `main`.
 4. **Arquivos do jogo** (nunca versionados), em `/mnt/STEAM/Projetos/` no host
    atual (antes `/media/aeon/STEAM/Projetos/`): `d2-114d` (1.14d reconstruída; o
    Aeonian **nunca** foi instalado nela) e `d2-114b`. A cópia de tabelas
-   `d2data-extracted` foi **apagada** em 2026-10-29 por ordem do dono. D2GL v1.3.3 em
-   `/media/aeon/STEAM/Diablo II LoD 1.13c -D2SE`. Projeto-irmão do Switch:
+   `d2data-extracted` foi **apagada** em 2026-10-29 por ordem do dono. D2GL oficial
+   v1.3.3 em `devkit-tools/d2gl-1.3.3`. Projeto-irmão do Switch:
    `DIABLO 2 LOD SWITCH PORT` e `medianxl-switch`, na mesma pasta.
 5. **Recompile e rode a suíte** (seção "Como construir e testar"). Referência:
    126 PASS / 0 FAIL com o `map-overlay` e as fases E e E2 (2026-10-31), Wine 11
@@ -183,8 +283,11 @@ do jogo): **não captura a tela**.
 6. `build/` e `dist/` não são versionados. Regenere-os: CMake e
    `python3 tools/package.py`.
 7. O histórico da conversa e as memórias do Claude ficam em
-   `~/.claude/projects/-media-aeon-STEAM-Projetos-Aeonian-OpenD2LOD*`. Se a `/home`
-   for apagada, o essencial está na seção seguinte.
+   `~/.claude/projects/-mnt-STEAM-Projetos-Aeonian-OpenD2LOD*`. Outras IAs não os veem
+   e a `/home` pode ser apagada: o essencial está em "Comece aqui" e na seção seguinte.
+8. **Backup do histórico antigo:** `/mnt/STEAM/Projetos/aeonian-historico-antes-da-reescrita.bundle`
+   guarda o que foi reescrito em 2026-10-30, incluindo a reimplementação. Não restaure nada dele. Apagá-lo é
+   decisão do dono.
 
 ## Preferências e regras do dono (para qualquer agente)
 
@@ -192,8 +295,12 @@ do jogo): **não captura a tela**.
 - Engenharia reversa do `Game.exe` **autorizada** pelo dono, sempre dentro do
   protocolo cleanroom (análise → specs e endereços; implementação só a partir
   das specs, em sessões separadas).
-- **Pedir antes de baixar** qualquer coisa. **Não instalar o Aeonian** na
+- **Pedir antes de baixar** qualquer coisa; as ferramentas de `devkit-tools/` já foram
+  baixadas com a autorização dele. **Não instalar o Aeonian** na
   instalação real (`d2-114d`) sem pedir; testar na cópia-espelho da suíte.
+- **O jogo roda invisível e mudo**, sempre: ver "Rodar o jogo fora da suíte".
+- O dono entra no GitHub pelo Google e não tem senha: o `gh` da pasta `devkit-tools/` já está
+  autenticado (`aeon1911`). Nunca peça nem digite credenciais.
 - **Nunca capturar a tela inteira** (já expôs conversas privadas uma vez). Use o log
   do motor, o trace do Wine ou o BMP que o próprio motor grava.
 - **Separar sempre "validado no jogo real" de "não validado"**. O dono já foi

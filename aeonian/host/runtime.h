@@ -50,6 +50,7 @@ struct Config {
   enum class Direct { kAuto, kOn, kOff };
   log::Level log_level = log::Level::kInfo;
   Direct force_direct = Direct::kAuto;
+  Direct force_txt = Direct::kAuto;
   bool allow_unknown_build = false;
   bool trace_files = false;
   std::vector<std::string> extra_args;
@@ -82,6 +83,7 @@ class Runtime {
   // Servicos usados pelos hooks.
   const char* CommandLine(const char* original);
   bool RedirectPath(const char* path, std::string* redirected);
+  bool RedirectWritePath(const char* path, std::string* redirected);
   void OnMessagePump();
   bool OnWindowMessage(AeonianWindowMessage* message);
   void OnShutdown();
@@ -120,6 +122,7 @@ class Runtime {
   void LoadPlugins();
   bool LoadPlugin(const ModManifest& mod, const std::string& relative);
   bool ShouldForceDirect() const;
+  bool ShouldForceTxt() const;
   bool DecideD2gl();
 
   struct Subscriber {

@@ -147,6 +147,14 @@ void TestVfs() {
 
   CHECK_EQ(*vfs.RelativeDataPath("data\\global\\x.txt"), "global\\x.txt");
   CHECK_EQ(NormalizeDir("C:/a/b//"), "C:\\a\\b");
+
+  CHECK(IsExcelBinRelativePath("GLOBAL\\EXCEL\\charstats.bin"));
+  CHECK(IsExcelBinRelativePath("global/excel/Skills.BIN"));
+  CHECK(!IsExcelBinRelativePath("global\\excel\\sub\\charstats.bin"));
+  CHECK(!IsExcelBinRelativePath("global\\excel\\.bin"));
+  CHECK(!IsExcelBinRelativePath("global\\excel\\charstats.txt"));
+  CHECK(IsExcelTxtRelativePath("GLOBAL\\EXCEL\\charstats.txt"));
+  CHECK(!IsExcelTxtRelativePath("global\\ui\\panel.txt"));
 }
 
 // Monta uma imagem PE32 minima ja mapeada com uma importacao

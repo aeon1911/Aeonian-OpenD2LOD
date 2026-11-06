@@ -99,6 +99,10 @@ Game.exe 1.14d (original, intocado)
 - Nunca ignore a formatação (C++20, Google Style).
 - Nunca capture a tela inteira do usuário para validar: use o log do motor ou
   o trace do Wine (`WINEDEBUG=+file`), que não expõem o que mais estiver aberto.
+- Nunca mostre a janela do jogo nem toque o som dele: o usuário usa a mesma
+  máquina. Rode invisível e mudo, como em
+  [`docs/HANDOFF.md`](docs/HANDOFF.md) ("Rodar o jogo fora da suíte").
+- Nunca faça commit ou push sem o usuário pedir.
 
 ## ⚖️ Licenciamento e assets
 

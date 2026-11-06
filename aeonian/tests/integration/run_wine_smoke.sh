@@ -300,22 +300,68 @@ if [[ -n "${AEONIAN_D2_LNG:-}" && -f "${AEONIAN_D2_LNG}" ]]; then
   check "painel a esquerda: nada sobre o painel" python3 -I "$HERE/bmp_check.py" same "$MODS/mapdrive/e04_painel_esquerda.bmp" "$MODS/mapdrive/e04b_painel_esquerda_sem_marcas.bmp" 0 0 400 600 40
   mkdir -p "$WORK/quadros-mapa" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa/" 2>/dev/null
   # O outro mod desvia primeiro: os dois ganchos e a original rodam na partida.
-  echo "== fase E2: partida com o DrawAutomap ja desviado antes do map-overlay"
+  # Tambem carrega o build-planner (C3/M2.2) com HUD desligado para validar a
+  # leitura de StatListEx/SkillList contra D2Common e salvar Aeontest.d2s no fim.
+  echo "== fase E2: partida com o DrawAutomap ja desviado + build-planner (M2.2/C3)"
   [[ "$SAVES" == "$WORK"/* && -d "$SAVES" ]] && rm -rf "$SAVES"
+  mkdir -p "$MODS/build-planner/builds"
+  cp "$BUILD/build_planner.dll" "$ROOT/aeonian/examples/build-planner/mod.ini" "$MODS/build-planner/"
+  cp "$ROOT/aeonian/examples/build-planner/builds/"*.json "$MODS/build-planner/builds/"
+  printf '[planner]\nenabled = 0\nauto_apply = 1\nplan_file = builds\\barbarian-whirlwind.json\nstep_delay_ms = 250\n' >"$MODS/build-planner/build-planner.ini"
   printf '[mod]\nid = mapdrive\npriority = 10\nplugin = mapdrive.dll\nbuilds = 1.14d\n' >"$MODS/mapdrive/mod.ini"
+  cp "$HERE/mapdrive-plugin/cidade.txt" "$MODS/mapdrive/mapdrive.txt"
+  printf '\nkey esc\nwait 600\nclick 400 262\nwait 3000\n' >>"$MODS/mapdrive/mapdrive.txt"
   rm -f "$MODS/mapdrive/"*.bmp
-  run_game 80 AEONIAN_MAPDRIVE_HOOK_DRAW=1
+  run_game 85 AEONIAN_MAPDRIVE_HOOK_DRAW=1 AEONIAN_BUILD_CAPTURE_ON_ENTER=1
   expect "encadeado: personagem criado e partida iniciada" 'MAPDRIVE em partida'
   expect "encadeado: map-overlay ve a partida (ancora do ato)" '\[map-overlay\] em partida, automap aberto'
   expect "encadeado: o gancho do map-overlay roda (marcas desenhadas)" '\[map-overlay\] quadro [0-9]+: [1-9][0-9]* marcas desenhadas \(modo 0'
   expect "encadeado: o desvio anterior tambem roda" 'MAPDRIVE desvio proprio contou [1-9][0-9]* chamadas de DrawAutomap'
   expect "encadeado: roteiro sem falhas"            'MAPDRIVE roteiro concluido sem falhas'
+  expect "build-planner: 17/17 simbolos resolvidos" '\[build-planner\] build-planner: 17/17 simbolos resolvidos'
+  expect "build-planner: estado do personagem conferido com D2Common (0 diferencas)" '\[build-planner\] build-planner: personagem .*Aeontest.* classe=barbarian\(4\) nv=1 .*conferencia D2Common: stat_diffs=0 prereq_diffs=0'
+  expect "build-planner: build capturada em JSON"   '\[build-planner\] build-planner: build capturada em .*Aeontest\.json'
   forbid "encadeado: bytes conferem"                'bytes nao conferem'
   forbid "sem excecoes de 1a chance (encadeado)"    'excecao de 1a chance'
   check "encadeado: quadro em tela cheia gravado (800x600)" python3 -I "$HERE/bmp_check.py" size "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" 800 600
   check "encadeado: marcas visiveis no quadro" python3 -I "$HERE/bmp_check.py" diff "$MODS/mapdrive/e01_cidade_tela_cheia.bmp" "$MODS/mapdrive/e01b_cidade_marcas_desligadas.bmp" 200 0 610 18 1000
   mkdir -p "$WORK/quadros-mapa-encadeado" && cp "$MODS/mapdrive/"*.bmp "$GAME/aeonian/aeonian.log" "$WORK/quadros-mapa-encadeado/" 2>/dev/null
-  rm -rf "$MODS/map-overlay" "$MODS/mapdrive" "$GAME/D2.LNG"
+
+  if [[ -f "$SAVES/Aeontest.d2s" ]]; then
+    echo "== fase E3: build-planner aplica pontos (0x3A/0x3B) + compilacao -txt (charstats.txt -> cache/*.bin -> DataTables)"
+    EXTRACTOR="${AEONIAN_MPQ_EXTRACT:-$ROOT/build/host/tools/mpq_extractor/ae_mpq_extract}"
+    HAS_TXT_MOD=0
+    if [[ -x "$EXTRACTOR" ]]; then
+      for mpq in "$D2/Patch_D2.mpq" "$D2/d2exp.mpq" "$D2/d2data.mpq"; do
+        [[ -f "$mpq" ]] || continue
+        "$EXTRACTOR" "$mpq" extract "$MODS/build-planner" 'data\global\excel\charstats.txt' >/dev/null 2>&1 || true
+        if [[ -f "$MODS/build-planner/data/global/excel/charstats.txt" ]]; then
+          sed -i 's/^Barbarian\t30\t/Barbarian\t35\t/' "$MODS/build-planner/data/global/excel/charstats.txt"
+          HAS_TXT_MOD=1
+          break
+        fi
+      done
+    fi
+    python3 -I "$HERE/mapdrive-plugin/test_save.py" --test-root "$WORK" --save "$SAVES/Aeontest.d2s" \
+      --act 1 --difficulty 0 --level 30 --statpts 2 --newskills 2 --keep-progression >/dev/null
+    printf 'wait 3000\nclick 400 300\nkey space\nwait 3000\nclick 400 308\nwait 3000\nkey enter\nwaitgame 30000\nwait 2500\n' >"$MODS/mapdrive/mapdrive.txt"
+    run_game 35
+    if [[ $HAS_TXT_MOD -eq 1 ]]; then
+      expect "-txt injetado automaticamente ao detectar excel/*.txt" 'linha de comando: .*-txt'
+      expect "charstats.txt redirecionado ao mod" "vfs: data\\\\GLOBAL\\\\EXCEL\\\\charstats\\.txt -> mod 'build-planner'"
+      expect "charstats.bin compilado gravado no cache do motor" "vfs: escrita data\\\\GLOBAL\\\\EXCEL\\\\charstats\\.bin -> cache '.*charstats\\.bin'"
+      expect "charstats.bin relido do cache pelo D2Common" "vfs: data\\\\GLOBAL\\\\EXCEL\\\\charstats\\.bin -> mod '_txt_cache'"
+      expect "DataTables/CharStatsTxt reflete str=35 compilado por -txt" '\[build-planner\] build-planner: personagem .*Aeontest.* nv=30 .*cs_str=35 .*conferencia D2Common: stat_diffs=0 prereq_diffs=0'
+    else
+      expect "build-planner: pontos livres lidos na entrada (StatPts=2 NewSkills=2)" '\[build-planner\] build-planner: personagem .*Aeontest.* nv=30 .*StatPts=2 NewSkills=2 .*conferencia D2Common: stat_diffs=0 prereq_diffs=0'
+    fi
+    expect "build-planner: pacote 0x3A enviado (atributo)" '\[build-planner\] build-planner: pacote 0x3A enviado'
+    expect "build-planner: pacote 0x3B enviado (habilidade)" '\[build-planner\] build-planner: pacote 0x3B enviado'
+    expect "build-planner: pontos aplicados e confirmados na partida" '\[build-planner\] build-planner: todos os pontos livres aplicados na partida \(gasto_attr=2 gasto_skill=2'
+    forbid "sem excecoes de 1a chance (build-planner)" 'excecao de 1a chance'
+  fi
+
+  rm -rf "$MODS/map-overlay" "$MODS/mapdrive" "$MODS/build-planner" "$GAME/D2.LNG"
   PREFIX="$PREFIX_MAIN"
 else
   echo "  SKIP  fase E: partida real (defina AEONIAN_D2_LNG)"

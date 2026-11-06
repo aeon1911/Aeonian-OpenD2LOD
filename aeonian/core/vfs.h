@@ -71,6 +71,13 @@ class Vfs {
 // Normaliza separadores para `\` e remove barras finais.
 std::string NormalizeDir(std::string_view dir);
 
+// `rel_data_path` (saida de RelativeDataPath) e um `<nome>.bin` ou `<nome>.txt`
+// diretamente sob `global\excel\`? Usado pelo modo `-txt` para redirecionar a
+// escrita de `.bin` compilados para `<aeonian>\cache\data\global\excel\` e para
+// detectar automaticamente quando um mod traz tabelas `.txt`.
+bool IsExcelBinRelativePath(std::string_view rel_data_path);
+bool IsExcelTxtRelativePath(std::string_view rel_data_path);
+
 }  // namespace aeonian
 
 #endif  // AEONIAN_CORE_VFS_H_

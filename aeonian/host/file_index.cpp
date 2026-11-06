@@ -43,8 +43,16 @@ size_t FileIndex::AddTree(const std::string& dir) {
       std::string full = current + "\\" + fd.cFileName;
       if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
         pending.push_back(std::move(full));
-      } else if (files_.insert(ToLowerAscii(full)).second) {
-        ++added;
+      } else {
+        std::string lower = ToLowerAscii(full);
+        if (lower.size() > 4 &&
+            lower.compare(lower.size() - 4, 4, ".txt") == 0 &&
+            lower.find("\\data\\global\\excel\\") != std::string::npos) {
+          has_excel_txt_ = true;
+        }
+        if (files_.emplace(std::move(lower), std::move(full)).second) {
+          ++added;
+        }
       }
     } while (FindNextFileA(h, &fd));
     FindClose(h);
@@ -52,8 +60,17 @@ size_t FileIndex::AddTree(const std::string& dir) {
   return added;
 }
 
+void FileIndex::AddFile(const std::string& path) {
+  files_[ToLowerAscii(path)] = path;
+}
+
 bool FileIndex::Contains(const std::string& path) const {
   return files_.count(ToLowerAscii(path)) != 0;
+}
+
+std::string FileIndex::ResolveCase(const std::string& path) const {
+  auto it = files_.find(ToLowerAscii(path));
+  return it != files_.end() ? it->second : path;
 }
 
 }  // namespace aeonian

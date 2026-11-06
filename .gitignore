@@ -1,7 +1,7 @@
 # Build
-build/
-build-*/
-cmake-build-*/
+/build/
+/build-*/
+/cmake-build-*/
 CMakeUserPresets.json
 compile_commands.json
 

@@ -49,6 +49,14 @@
 > `D2Game/Quests/aNqM.cpp`. Rótulos são os que o jogo mostra, lidos em quadros da janela do
 > jogo.
 >
+> **Quarta análise (2026-11-06).** Mesmo binário (`objdump` sobre o `.text`): tipo de partida
+> e dificuldade no cliente (§1), classe 534 em volta das gaiolas do nível 111 (§4), os globais
+> de `QuestRecord*` que o painel de missões do cliente lê (§5.4) e a vida em % de monstros e
+> aliados no cliente (§7.1 e §7.3). Companheiras novas:
+> [`game-exe-1.14d-character.md`](game-exe-1.14d-character.md) (atributos, habilidades e
+> distribuição de pontos) e [`game-exe-1.14d-datatables.md`](game-exe-1.14d-datatables.md)
+> (compilação `-txt` e `DataTables`).
+>
 > **Legenda de confiança:** ✅ confirmado **em execução** (valor lido ao vivo);
 > 🔷 confirmado **só no binário** (código lido, não executado/observado);
 > ⚠️ hipótese, marcada `TODO(RE)`.
@@ -77,10 +85,17 @@
 |---|---|---|---|---|
 | `0x7A6A70` | `Unit*` | jogador local; `NULL` fora da partida | `D2Client.GetPlayerUnit` (+1) | ✅ |
 | `0x7A0634` | `Act*` | ato carregado no cliente; `NULL` fora da partida | `D2Client.DrawAutomap` (+2), `D2Client.ExitGameCleanup` (+1, +17) | ✅ |
+| `0x7A0610` | `uint32_t` | tipo de partida no cliente: **0 ou 1 = um jogador (local)**; 2 ou 3 = Battle.net fechado; 4 = Battle.net aberto; 6 / 8 = TCP/IP | `D2Client.GetGameType` (+1) | 🔷 + ✅ |
+| `0x7A060C` | `uint8_t` | dificuldade da partida: **0 = Normal**, **1 = Pesadelo**, **2 = Inferno** | `D2Client.GetDifficulty` (+1) | 🔷 + ✅ |
 
 - **Partida em andamento** ⇔ `[0x7A0634] != 0` **e** `[0x7A6A70] != 0`. Observado:
   ambos 0 no menu principal, ambos preenchidos na cidade, e ambos de volta a 0
   depois de "Save and Exit Game". ✅
+- **Um jogador (local)** ⇔ `[0x7A0610] <= 1`. O próprio jogo testa `== 0 || == 1`
+  para caminhos exclusivos de um jogador (`0x44BC30`, `0x486D10`). `0x44DB30`
+  (`D2Client.GetGameType`, 6 bytes: `a1 10 06 7a 00 c3`) devolve `[0x7A0610]` em
+  `eax`, sem argumentos. `0x44DCD0` (`D2Client.GetDifficulty`, 6 bytes:
+  `a0 0c 06 7a 00 c3`) devolve o byte `[0x7A060C]` em `al`. 🔷 + ✅
 - O `Act*` de `[0x7A0634]` é o mesmo de `jogador+0x1C`. ✅
 - `0x463DD0` (`D2Client.GetPlayerUnit`): devolve `[0x7A6A70]` em `eax`, sem
   argumentos (qualquer convenção serve), 438 chamadores. Há uma cópia idêntica
@@ -288,36 +303,37 @@ inimigo ⇔ unit+0x00 == 1  e  modo ∉ {0, 12}
 **Consequência:** a lista de aliados (§7.1) deixa de ser necessária para saber se um monstro é
 hostil. Continua necessária para saber o **dono** e para marcar o aliado como aliado.
 
-O filtro anterior, só com os bits de `+0x0C`, estava errado. Os dois falsos positivos vistos são
-aliados sem nó na lista:
+O filtro anterior, só com os bits de `+0x0C`, estava errado. Os três falsos positivos vistos são
+aliados/amigos sem nó na lista:
 
 | Classe | Código | `+0x0C` | Onde | Alinhamento | Lista de aliados | Conf. |
 |---|---|---|---|---|---|---|
 | **359** | `IW` | `0x02018408` | cidade do Ato III (3 predefinidas no nível 75) | 2 | ausente | ✅ Normal, Pesadelo, Inferno |
 | **522** | `0A` | `0x0205840B` | nível 112, em volta do jogador | 2 | ausente | ✅ Normal |
+| **534** | — | passa nos bits (`0x8000` + `0x400`, não selecionável) | nível 111, em volta das gaiolas (classe 473), modo 2 | 2 | ausente | ✅ Normal |
 
-**O que distingue a classe 359:** o estado 105 com o stat 172 = 2, igual aos NPCs. O servidor o
+**O que distingue as classes 359, 522 e 534:** o estado 105 com o stat 172 = 2, igual aos NPCs. O servidor o
 define com `0x5543B0` `D2Game.SetUnitAlignment`. 🔷 Nos registros de `monstats` não há coluna
 que dê esse valor: fora os campos de identificação, nenhum byte separou amigos de hostis nas 37
 classes comparadas. ✅
 
-**Conferência, 123 classes vistas vivas** (Normal, Atos I–V; a cidade do Ato III também em
+**Conferência, 124 classes vistas vivas** (Normal, Atos I–V; a cidade do Ato III também em
 Pesadelo e Inferno). Por classe, numa leitura ao vivo: ✅
 
 | Passa nos bits? | Alinhamento | Classes | Situação |
 |---|---|---|---|
 | sim | 0 (sem estado 105 ou sem lista de estados) | 95 | hostis; o filtro as mantém |
-| sim | 2 | 2 (359, 522) | os falsos positivos acima; o filtro as recusa |
+| sim | 2 | 3 (359, 522, 534) | os falsos positivos acima; o filtro as recusa |
 | não | 2 | 18 | NPCs |
 | não | 0 | 8 | ambiente (como 517 e 567–569) |
 
 - Nas invocações e mercenários vistos (§7.1), os bits passam e o alinhamento é 2. ✅
 - **O estado já está lá na primeira leitura.** Em 12 unidades da cidade do Ato III, lidas de
   cerca de 100 em 100 ms enquanto o jogador se aproximava, nenhuma apareceu sem ele. ✅
-- **Por varredura da tabela:** 626 das 734 classes passam nos bits. Das 43 com `0x400`, as 13 vistas
-  vivas são amigas (359, 522, mercenário e invocações); nenhuma hostil apareceu com esse bit. Se
+- **Por varredura da tabela:** 626 das 734 classes passam nos bits. Das 43 com `0x400`, as 14 vistas
+  vivas são amigas (359, 522, 534, mercenário e invocações); nenhuma hostil apareceu com esse bit. Se
   `GetUnitAlignment` não estiver disponível, recusar `0x400` deu o mesmo resultado nas classes
-  vistas. ⚠️ As outras 30 nunca foram vistas vivas.
+  vistas. ⚠️ As outras 29 nunca foram vistas vivas.
 - Entre as classes com predefinida nas cinco cidades, só a 359 passa nos bits. ✅
 - Uma `PresetUnit` tipo 1 pode trazer classe **≥ 734**, fora da tabela de `monstats` (64 valores
   distintos no censo, de 734 a 836). ✅ Nunca a use como índice sem conferir o limite.
@@ -523,14 +539,33 @@ sem nenhum clique: ✅
 Portanto: modo ≠ 0 indica objeto já usado; modo 0 **não** prova missão pendente.
 
 **Estado da missão.** `0x65C310` `D2Common.GetQuestState` é `__stdcall(QuestRecord*, int missão, int
-estado)` e lê o bit `missão*16 + estado`. 🔷 Asserta com registro nulo. Os tratadores passam números
-fixos, e eles são os índices de palavra do `.d2s`: 4 (`OperateFn` 9, 10), 11 (24), 17 (28), 19 (31),
-21 (53), 22 (46), 26 (73), 27 (49), 39 (69), 40 (72). 🔷 A 22 foi confirmada: marcar a palavra 22 no
-save liberou a classe 342. ✅
+estado)` e lê o bit `missão*16 + estado`. 🔷 Asserta com registro nulo, se `estado >= 0x300` ou se
+`QuestRecord+0x00` for nulo. Os tratadores passam números fixos, e eles são os
+índices de palavra do `.d2s`: 1 (`OperateFn` 6), 3 (21), 4 (9, 10, 12), 6 (`OperateFn` 6 em a1q5),
+9 (39), 10 (40), 11 (24, 41), 12 (42), 14 (25), 17 (28), 18 (57, 58, 59), 19 (31), 21 (53), 22 (46),
+26 (52, 54, 55, 56, 73), 27 (49), 36 (gaiolas, classe 473), 37 (67, classes 460/558), 39 (65, 69),
+40 (72). 🔷 A 22 foi confirmada: marcar a palavra 22 no save liberou a classe 342. ✅
 
-**No cliente esse registro não ajuda.** `PlayerData+0x10`, `+0x14` e `+0x18` do jogador local apontam
-para `{buffer, 0x300}`, um por dificuldade, mas o buffer lido estava **zerado** com a palavra 22
-marcada no save. ✅ `TODO(RE)`: de onde o painel de missões do cliente tira o estado.
+**De onde o cliente tira o estado das missões (`UI/QuestLog.cpp`).** `PlayerData+0x10`, `+0x14` e
+`+0x18` do jogador local são os ponteiros do servidor e ficam zerados no cliente. ✅ O cliente
+guarda o `QuestRecord*` da dificuldade atual nos globais abaixo, atualizados pelo tratador do pacote
+S→C `0x28` (`0x4B6DD0` → `0x65C4D0` `D2Common.CopyQuestRecord`): 🔷
+
+| Global (VA) | Tipo | Significado | Âncora no INI | Conf. |
+|---|---|---|---|---|
+| `0x7C0D43` | `QuestRecord*` | flags atuais das missões no cliente | `D2Client.GetQuestFlags` (+1) | 🔷 |
+| `0x7C0D47` | `QuestRecord*` | histórico de missões no cliente | `D2Client.GetQuestHistoryFlags` (+1) | 🔷 |
+
+- `0x4B32D0` `D2Client.GetQuestFlags` (6 bytes: `a1 43 0d 7c 00 c3`) devolve `[0x7C0D43]`.
+- `0x4B32E0` `D2Client.GetQuestHistoryFlags` (6 bytes: `a1 47 0d 7c 00 c3`) devolve `[0x7C0D47]`.
+- Layout de `QuestRecord` (alocado em `0x65C260` `D2Common.AllocQuestRecord`): `+0x00` = `uint8_t*`
+  buffer de bits (`0x60` bytes = 48 palavras de 16 bits); `+0x04` = `uint32_t` tamanho em bytes
+  (`0x60`). 🔷
+- Estados consultados pelo painel de missões (`0x4B35B0`): `0` = recompensa entregue / missão
+  concluída (bit 0 da palavra `missão`), `1` = recompensa pendente (bit 1), `12` (`0x0C`) = ícone
+  fechado no diário, `13` (`0x0D`) = concluída na partida atual. Leitura direta equivalente a
+  `GetQuestState([0x7C0D43], missão, 0)`: ler a palavra `uint16_t w` em `[[0x7C0D43]+0x00] + missão*2`
+  (com `missão*2 + 2 <= [[0x7C0D43]+0x04]`) e testar `(w & 1) != 0`. 🔷
 
 ## 6. Resumo para o INI
 
@@ -549,8 +584,10 @@ Símbolos registrados (todos com `bytes` conferidos no binário):
 `D2Game.WaypointOperate`, `D2Game.PortalOperate`. Da terceira análise:
 `D2Common.GetQuestState`, `D2Game.SetUnitAlignment`, `D2Game.ObjectInitDispatch`,
 `D2Game.ArcanePortalOperate`, `D2Game.DurancePortalOperate`, `D2Game.ObjectWarpOperate`,
-`D2Client.AutomapClassifyUnit`, `D2Client.GetPetRelation`. Offsets de estrutura ficam só nesta
-spec.
+`D2Client.AutomapClassifyUnit`, `D2Client.GetPetRelation`. Da quarta análise:
+`D2Client.GetGameType`, `D2Client.GetDifficulty`, `D2Client.GetQuestFlags`,
+`D2Client.GetQuestHistoryFlags`, `D2Common.GetUnitMaxHp`, `D2Client.GetPetLifePercent`.
+Offsets de estrutura ficam só nesta spec.
 
 ## 7. Dono da unidade: mercenários e invocações
 
@@ -567,7 +604,7 @@ bytes `+1`. ✅
 | `+0x08` | 4 | **id da unidade aliada** (igual a `Unit+0x0C`) | ✅ |
 | `+0x0C` | 4 | **id da unidade dona** (no jogador local, o `Unit+0x0C` dele) | ✅ |
 | `+0x10` | 4 | 1 no mercenário, 0 nas hidras | ✅ valor ⚠️ |
-| `+0x1C` | 4 | 100 ao criar; provável vida em % | 🔷 ⚠️ |
+| `+0x1C` | 4 | vida do aliado em % (`0..100`), lida por `0x479080` `D2Client.GetPetLifePercent` | 🔷 + ✅ |
 | `+0x24`, `+0x28` | 4 | só no mercenário: semente e id do nome | ✅ valor |
 | `+0x30` | 4 | próximo nó, 0 no fim | ✅ |
 
@@ -640,6 +677,28 @@ Portanto **alinhamento 2 recusa o que não é hostil, mas não diz quem é aliad
 vale para NPCs e para as classes 359 e 522. Para dono, use a lista de §7.1. O filtro de §4 usa os dois
 sinais.
 
+### 7.3 Vida do monstro no cliente (`hitpoints` / `maxhp`)
+
+Quando o cliente cria ou atualiza uma unidade tipo 1 a partir dos pacotes do servidor
+(`0x45F156`, `0x45F446`), ele não recebe o valor absoluto de vida do servidor: grava em
+`Unit+0x5C` (`StatListEx`) o stat 7 (`maxhp`) fixo em `0x8000` (`32768 = 128 << 8`) e o stat 6
+(`hitpoints`) como `hp_byte << 8` (onde `hp_byte` está em `0..128`, logo `stat 6` fica em
+`0..0x8000`). 🔷
+
+- `0x625D10` `D2Common.GetUnitMaxHp` (RVA `0x225D10`, `__stdcall int(Unit*)`, sem asserção;
+  devolve 0 com `Unit*` nulo) lê o stat 7 (`maxhp`), que nos monstros do cliente vale `0x8000`. 🔷
+- Ao desenhar a barra de vida do monstro sob o cursor (`0x45266A`) e escolher a cor (`0x46EE3B`),
+  o cliente chama `D2Common.GetUnitMaxHp(unit)` e `D2Common.GetUnitStat(unit, 6, 0)` (`0x625480`)
+  e calcula `(hp << 7) / maxhp` (`0..128`) ou `(hp * 100) / maxhp` (`0..100%`). 🔷
+- **Leitura direta da memória (sem chamar o jogo):** em `Unit+0x5C` (`StatListEx`), procure as
+  chaves `6 << 16` (`0x00060000`, `hitpoints`) e `7 << 16` (`0x00070000`, `maxhp`) no vetor total
+  (`StatListEx+0x48`, contagem `WORD +0x4C`, quando `(DWORD +0x10 & 0x80000000) != 0`) ou no
+  vetor base (`StatListEx+0x24`, contagem `WORD +0x28`). Se `hp <= 0`, `hp_percent = 0`; caso
+  contrário, com `denom = (maxhp > 0 ? maxhp : 0x8000)`,
+  `hp_percent = clamp((hp * 100) / denom, 1, 100)`. Para aliados na lista `[0x7BB5BC]`, se a
+  unidade não trouxer o stat 6, `PetEntry+0x1C` (`0x479080` `D2Client.GetPetLifePercent`,
+  `__fastcall int(uint32_t unit_id /*ecx*/)`) dá diretamente a vida em `0..100`. 🔷
+
 ## 8. Em aberto (`TODO(RE)`)
 
 1. Bits de `+0xC4`/`+0xC8` além dos da tabela (§3.3) e `MonsterData+0x2C`.
@@ -647,8 +706,9 @@ sinais.
    foi achado no binário: vale o rótulo do jogo.
 3. Colunas de `monstats` além de `+0x00`/`+0x0C`, com o alinhamento das linhas (§4).
 4. Objetos de quest: 13 dos 24 valores de `OperateFn` só têm tratador e predefinida; os selos não foram
-   alcançados em jogo (§5.4). De onde o cliente tira o estado das missões (§5.4). Classes 100 e 377,
-   que não têm predefinida (§5.3).
+   alcançados em jogo (§5.4). Os globais `[0x7C0D43]`/`[0x7C0D47]` do painel de missões do cliente
+   foram mapeados no binário (§5.4); falta conferir `[0x7C0D43]` ao vivo durante e após uma missão.
+   Classes 100 e 377, que não têm predefinida (§5.3).
 5. Esqueleto, revivido e multijogador (§7.1). Multijogador (TCP/IP) segue não examinado.
-6. Tudo foi visto com um jogador. Filtro de §4: 97 das 626 classes que passam nos bits foram vistas
+6. Tudo foi visto com um jogador. Filtro de §4: 98 das 626 classes que passam nos bits foram vistas
    vivas; alinhamento 1 e monstro convertido não foram vistos.

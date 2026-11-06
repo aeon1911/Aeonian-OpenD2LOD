@@ -86,9 +86,12 @@ HANDLE WINAPI HookCreateFileA(LPCSTR name, DWORD access, DWORD share,
   Runtime& rt = Runtime::Get();
   rt.EnsureInitialized();
   std::string redirected;
-  if (name != nullptr && IsReadOnlyOpen(access, disposition) &&
-      rt.RedirectPath(name, &redirected)) {
-    name = redirected.c_str();
+  if (name != nullptr) {
+    if (IsReadOnlyOpen(access, disposition)) {
+      if (rt.RedirectPath(name, &redirected)) name = redirected.c_str();
+    } else if (rt.RedirectWritePath(name, &redirected)) {
+      name = redirected.c_str();
+    }
   }
   HANDLE handle = g_real.create_file(name, access, share, security,
                                      disposition, flags, templ);

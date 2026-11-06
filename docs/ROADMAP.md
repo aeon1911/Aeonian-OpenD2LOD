@@ -8,17 +8,21 @@ Feito e validado **no `Game.exe` 1.14d real sob Wine 11 (Linux)**:
 
 - proxy `ijl11.dll` + `aeonian.dll`; instalação e desinstalação sem alterar o
   `Game.exe` (SHA-256 conferido; `ijl11.dll` original restaurado byte a byte);
-- 7 hooks de IAT; VFS de mods com índice em memória; `-direct` automático;
+- 7 hooks de IAT; VFS de mods com índice em memória; `-direct` e `-txt` automáticos
+  (redirecionando a escrita de `.bin` compilados por `-txt` para
+  `aeonian\cache\data\global\excel\` sem tocar na pasta do jogo);
 - plugins com eventos (`on_loaded`, `on_tick`, `on_window_message`,
   `on_shutdown`) e API de log/símbolos/hook inline/patch;
 - falha segura (build desconhecida; `AEONIAN_DISABLE=1`);
 - testes: `aeonian/tests/core_test.cpp` (host) e
-  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real; 124 checagens com a
-  partida das fases E e E2).
+  `aeonian/tests/integration/run_wine_smoke.sh` (jogo real; fases A, A2, A3, E,
+  E2, E3, B, B2, C e D).
 
 **Não validado ainda:** Windows nativo; qualquer ambiente tipo Wine-NX/Switch;
-instalação oficial da loja; `-txt`. (A troca de arte foi verificada pelo quadro
-do próprio jogo, comparando o menu com e sem o mod.)
+instalação oficial da loja. (A troca de arte foi verificada pelo quadro do
+próprio jogo, comparando o menu com e sem o mod; `-txt` foi validado na fase E3
+compilando `charstats.txt` modificado em `aeonian\cache` e conferindo o valor em
+`DataTables`.)
 
 ## M2.1 — Apresentação do quadro e D2GL ✅ (parcial)
 
@@ -45,14 +49,27 @@ Plugins que **leem o jogo**. Cada item = spec de análise → símbolos verifica
 `addresses/1.14d.ini` → API. Prioridade: destrava os requisitos do client (abaixo).
 
 1. **Unidades** (jogador, monstros, objetos/portais): ponteiro do jogador, tabelas
-   de unidades por tipo, posição, vida, tipo de monstro. 🟡 spec
+   de unidades por tipo, posição, vida, tipo de monstro. ✅ spec
    [`game-exe-1.14d-units.md`](specs/game-exe-1.14d-units.md) + símbolos; usado pelo
-   `map-overlay` (tipo, dono e objetos sim; vida ainda não).
+   `map-overlay` (tipo, dono, objetos, estado de quest via `QuestRecord` e percentual
+   de vida de monstros e aliados).
 2. **Nível/Mapa**: nível atual, geometria/saídas, *automap*. 🟡 spec
    [`game-exe-1.14d-levels-automap.md`](specs/game-exe-1.14d-levels-automap.md) +
    símbolos; usado pelo `map-overlay` nos Atos I–V e em 640×480 e 800×600.
-3. **Personagem**: atributos, pontos livres, habilidades e a rotina de criação.
-4. **Carregador de tabelas**: hot-reload e acesso a linhas.
+3. **Personagem**: atributos, pontos livres, habilidades e distribuição pelo
+   protocolo do cliente (`0x3A` / `0x3B`). ✅ spec
+   [`game-exe-1.14d-character.md`](specs/game-exe-1.14d-character.md) + 17 símbolos
+   em `addresses/1.14d.ini`; usado pelo `build-planner` (conferido em partida contra
+   `D2Common.GetUnitBaseStat`, `D2Common.GetUnitStat`,
+   `D2Common.GetBaseSkillLevelById` e `D2Common.CheckSkillPrereqs`, com 0 diferenças).
+4. **Carregador de tabelas (`DataTables` / `-txt`)**: compilação de `.txt` → `.bin`
+   via `-txt` com cache no VFS (`aeonian\cache\data\global\excel\`), ciclo de vida
+   de `DataTables` (`D2Common.LoadDataTables` / `FreeDataTables`) e acesso a linhas
+   (`CharStatsTxt` em `+0xBC4`, `SkillsTxt` em `+0xB98`, `SkillDescTxt` em `+0xB8C`,
+   `MonStatsTxt` em `+0xA78`, `LevelDefsBin` em `[0x96C890]`, `ObjectsTxt` em
+   `[0x96D470]`). ✅ spec
+   [`game-exe-1.14d-datatables.md`](specs/game-exe-1.14d-datatables.md) + símbolos
+   em `addresses/1.14d.ini`, validado em jogo real na fase E3 da suíte.
 
 ## Requisitos obrigatórios do client (após a suíte)
 
@@ -63,7 +80,7 @@ finalizada**. Todos dependem do M2.2.
 |---|---|---|---|
 | C1 | **Mapa: marcar onde ficam a entrada e a saída** (portas/escadas/waypoints) da área | níveis + objetos/saídas; desenho no automap (M2.1 `on_present`) | 🟡 **feito nos Atos I–V** pelo mod `map-overlay` ([`modding/MAP_OVERLAY.md`](modding/MAP_OVERLAY.md)): warps (exatos ou pela sala), passagens abertas (exatas pela colisão ou pela regra do Ato I, aproximadas e rotuladas nos demais casos), waypoints, portais e **objetivos de quest** sem configuração; tela cheia e minimapa; GDI nas três dificuldades, D2GL em Normal |
 | C2 | **Mapa: mostrar todos os inimigos** | lista de unidades-monstro do jogador atual | 🟡 **feito** pelo mesmo mod: monstros vivos das salas carregadas, com lacaio, campeão, único e superúnico; NPCs, aliados e amigos à parte, com o filtro de alinhamento da spec (classe 359 deixou de ser hostil); no modo multijogador/online não se aplica |
-| C3 | **Planejador de builds**: salvar builds e **aplicá-las a personagens novos** | personagem (atributos/habilidades) + criação de personagem + UI | formato próprio versionado (`builds/*.json`); aplicar = distribuir pontos conforme o plano a cada nível, via API do jogo (nada de editar saves) |
+| C3 | **Planejador de builds**: salvar builds e **aplicá-las a personagens novos** | personagem (atributos/habilidades) + UI | 🟡 **feito** pelo mod `build-planner` ([`modding/BUILD_PLANNER.md`](modding/BUILD_PLANNER.md)): planos versionados (`builds/*.json`), captura da build do personagem em partida (F8) e distribuição automática de pontos de atributo (`0x3A`) e habilidade (`0x3B`) via `D2Client.SendPacket_ByteWord` a cada nível em um jogador (sem editar saves), validado nas fases E2 e E3 da suíte |
 | C4 | **Compatibilidade total com mods — Project Diablo 2 e Median XL** | suporte à base **1.13c** (ver abaixo) | **risco alto: ver a nota** |
 
 **C1/C2 — o que falta** (matriz e evidência em

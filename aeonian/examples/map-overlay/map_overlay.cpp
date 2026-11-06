@@ -499,8 +499,9 @@ void LogSummary(const AutomapView& view, DWORD now) {
              m.unit_class, m.dest_level, p.x, p.y);
         break;
       case MarkKind::kAlly:
-        Logf(AEONIAN_LOG_INFO, "  aliado classe %d, tipo %d (%s), automap (%d,%d)", m.unit_class,
-             m.ally_type, m.own ? "do jogador" : "de outro dono", p.x, p.y);
+        Logf(AEONIAN_LOG_INFO, "  aliado classe %d, tipo %d (%s), vida %d%%, automap (%d,%d)",
+             m.unit_class, m.ally_type, m.own ? "do jogador" : "de outro dono", m.hp_percent, p.x,
+             p.y);
         break;
       default:
         break;
@@ -853,6 +854,17 @@ void DrawShape(const Painter& p, const ScreenMark& m) {
     case MarkKind::kPassageApprox:
       p.DashedLine(x, y, p.X(m.x[1]), p.Y(m.y[1]), p.S(2), kExitColor);
       break;
+  }
+  if ((m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion ||
+       m.kind == MarkKind::kChampion || m.kind == MarkKind::kUnique ||
+       m.kind == MarkKind::kSuperUnique || m.kind == MarkKind::kAlly) &&
+      m.hp_percent > 0 && m.hp_percent < 100) {
+    const int bar_w = p.S(10);
+    const int filled = (bar_w * m.hp_percent + 99) / 100;
+    const int bar_y = y - p.S(7);
+    p.Line(x - bar_w / 2, bar_y, x + bar_w / 2, bar_y, p.S(2), kOutline);
+    p.Line(x - bar_w / 2, bar_y, x - bar_w / 2 + filled, bar_y, p.S(1),
+           m.kind == MarkKind::kAlly ? kAllyColor : kMonsterColor);
   }
 }
 

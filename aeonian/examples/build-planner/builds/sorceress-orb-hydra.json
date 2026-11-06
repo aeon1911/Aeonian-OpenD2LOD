@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "Sorceress Hydra/Orb",
+  "class": "sorceress",
+  "auto_prereqs": true,
+  "attributes": {
+    "strength": 156,
+    "dexterity": 35,
+    "vitality": 300,
+    "energy": 50,
+    "overflow": "vitality"
+  },
+  "skills": [
+    { "id": 37, "level": 1 },
+    { "id": 42, "level": 1 },
+    { "id": 54, "level": 1 },
+    { "id": 62, "level": 20 },
+    { "id": 61, "level": 20 },
+    { "id": 64, "level": 20 },
+    { "id": 65, "level": 10 },
+    { "id": 47, "level": 20 }
+  ]
+}
+

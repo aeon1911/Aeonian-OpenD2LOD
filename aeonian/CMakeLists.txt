@@ -106,6 +106,17 @@ if(WIN32)
     set_target_properties(map_overlay_plugin PROPERTIES
         PREFIX "" OUTPUT_NAME "map_overlay")
 
+    # Planejador de builds (C3/M2.2): le personagem, salva e aplica planos.
+    add_library(build_planner_plugin SHARED
+        examples/build-planner/build_planner.cpp
+        examples/build-planner/build_plan.cpp)
+    target_include_directories(build_planner_plugin PRIVATE include)
+    target_link_libraries(build_planner_plugin PRIVATE ae_core ae_warnings gdi32 user32)
+    target_compile_options(build_planner_plugin PRIVATE ${AE_WIN_COMPILE})
+    target_link_options(build_planner_plugin PRIVATE ${AE_WIN_LINK})
+    set_target_properties(build_planner_plugin PROPERTIES
+        PREFIX "" OUTPUT_NAME "build_planner")
+
     # Plugin de autoteste (so para tests/integration).
     add_library(selftest_plugin SHARED
         tests/integration/selftest-plugin/selftest.cpp)
@@ -144,4 +155,13 @@ else()
     target_compile_definitions(ae_map_overlay_test PRIVATE
         AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     add_test(NAME map_overlay COMMAND ae_map_overlay_test)
+
+    # Logica portavel do mod build-planner (C3 e M2.2).
+    add_executable(ae_build_planner_test
+        examples/build-planner/build_plan_test.cpp
+        examples/build-planner/build_plan.cpp)
+    target_link_libraries(ae_build_planner_test PRIVATE ae_core ae_warnings)
+    target_compile_definitions(ae_build_planner_test PRIVATE
+        AEONIAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME build_planner COMMAND ae_build_planner_test)
 endif()

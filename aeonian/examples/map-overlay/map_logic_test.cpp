@@ -146,7 +146,7 @@ void TestAnchorsAgainstRealIni() {
   ResolveReport report;
   ResolveAddresses(mem, ResolveFromDb, &resolver, &a, &report);
   CHECK_EQ(report.resolved, report.total);
-  CHECK_EQ(report.total, 19u);
+  CHECK_EQ(report.total, 21u);
   CHECK(report.missing.empty());
   CHECK(report.notes.empty());
   // Os VAs que as specs documentam.
@@ -169,6 +169,8 @@ void TestAnchorsAgainstRealIni() {
   CHECK_EQ(a.objects_base, 0x96D470u);
   CHECK_EQ(a.objects_count, 0x96D474u);
   CHECK_EQ(a.unit_alignment, 0x6259B0u);
+  CHECK_EQ(a.game_type, 0x7A0610u);
+  CHECK_EQ(a.quest_flags, 0x7C0D43u);
   const uint32_t all = kFeatureAutomap | kFeatureMonsters | kFeatureObjectUnits |
                        kFeatureLevelLinks | kFeatureClip | kFeatureAllies |
                        kFeatureObjectTable | kFeaturePanels | kFeatureFrameSize |
@@ -812,14 +814,34 @@ struct World {
     mem.Put8(objects + cls * 0x1C0 + 0x167, sub_class);
     mem.Put8(objects + cls * 0x1C0 + 0x1B3, operate_fn);
   }
+  // Vida da unidade em StatListEx (Unit+0x5C, stat 6 = hitpoints, stat 7 = maxhp, U sec. 7.3).
+  void Hp(uint32_t unit, int32_t hp, int32_t maxhp = 0x8000) {
+    uint32_t list = 0;
+    mem.Read(unit + 0x5C, &list, 4);
+    if (list == 0) {
+      list = mem.Alloc(0x60);
+      mem.Put32(unit + 0x5C, list);
+      mem.Put32(list + 0x10, 0x80000000u);
+    }
+    const uint32_t pairs = mem.Alloc(2 * 8);
+    mem.Put32(list + 0x48, pairs);
+    mem.Put16(list + 0x4C, 2);
+    mem.Put16(pairs + 0x00, 0);
+    mem.Put16(pairs + 0x02, 6);
+    mem.PutI(pairs + 0x04, hp);
+    mem.Put16(pairs + 0x08, 0);
+    mem.Put16(pairs + 0x0A, 7);
+    mem.PutI(pairs + 0x0C, maxhp);
+  }
   // No inicio da lista, como um no novo.
-  void Ally(uint32_t id, uint32_t owner, int32_t type = 7) {
+  void Ally(uint32_t id, uint32_t owner, int32_t type = 7, int32_t hp_pct = -1) {
     const uint32_t node = mem.Alloc(0x34);
     uint32_t head = 0;
     mem.Read(addr.ally_list, &head, 4);
     mem.PutI(node + 0x04, type);
     mem.Put32(node + 0x08, id);
     mem.Put32(node + 0x0C, owner);
+    if (hp_pct >= 0) mem.PutI(node + 0x1C, hp_pct);
     mem.Put32(node + 0x30, head);
     mem.Put32(addr.ally_list, node);
   }
@@ -863,6 +885,8 @@ struct World {
     addr.automap_divisor = globals + 48;
     addr.automap_offset_x = globals + 52;
     addr.automap_offset_y = globals + 56;
+    addr.game_type = globals + 60;
+    addr.quest_flags = globals + 64;
     addr.unit_alignment = 0x6259B0;  // so a presenca importa: o mod nao chama
     addr.ui_state = mem.Alloc(0x26 * 4);
     objects = mem.Alloc(573 * 0x1C0);
@@ -1006,7 +1030,8 @@ void TestScanWorld() {
   w.MonStats(148, 0x03010703);
   w.MonStats(149, 0x02010402);
   w.MonStats(180, 0x02418803);
-  w.Monster(5, 1, 0x00, w.room1, 100, 200);     // normal
+  const uint32_t m_normal = w.Monster(5, 1, 0x00, w.room1, 100, 200);     // normal
+  w.Hp(m_normal, 24576, 32768);  // 75% de vida no cliente (U sec. 7.3)
   w.Monster(63, 2, 0x0C, w.room1, 110, 210);    // campeao (com o bit de unico)
   w.Monster(63, 12, 0x00, w.room1, 120, 220);   // cadaver: some
   w.Monster(148, 1, 0x00, w.room1, 130, 230);   // NPC
@@ -1035,7 +1060,7 @@ void TestScanWorld() {
   w.Monster(159, 1, 0x00, w.room1, 192, 292, 0x32);
   const uint32_t ally_valk = w.Monster(180, 1, 0x00, w.room1, 193, 293, 0x33);
   w.Align(ally_valk, 2);
-  w.Ally(0x33, 1, 2);
+  w.Ally(0x33, 1, 2, 85);
   // A unidade do waypoint coincide com a predefinida (cy 8 maior: centro do
   // subtile); um segundo waypoint so existe como unidade, de outra classe.
   const Point wp = SubtileToClient(1120 * 5 + 20, 1120 * 5 + 5);
@@ -1143,10 +1168,19 @@ void TestScanWorld() {
   CHECK(manual != nullptr && manual->label == 0);
   const Mark* outside = FindMark(scan, MarkKind::kObject, 9000);
   CHECK(outside != nullptr && outside->label == 1);
+  int32_t hp_pct = -1;
+  CHECK(ReadUnitHpPercent(w.mem, m_normal, &hp_pct) && hp_pct == 75);
+  CHECK(!ReadUnitHpPercent(w.mem, ally_valk, &hp_pct));
   int own = 0;
   for (const Mark& m : scan.marks) {
     if (m.kind == MarkKind::kAlly && m.own) ++own;
-    if (m.kind == MarkKind::kAlly && m.x[0] == 193) CHECK_EQ(m.ally_type, 2);
+    if (m.kind == MarkKind::kAlly && m.x[0] == 193) {
+      CHECK_EQ(m.ally_type, 2);
+      CHECK_EQ(m.hp_percent, 85);
+    }
+    if (m.kind == MarkKind::kMonster && m.x[0] == 100) {
+      CHECK_EQ(m.hp_percent, 75);
+    }
     if (m.kind == MarkKind::kMonster || m.kind == MarkKind::kMinion) {
       CHECK(m.unit_class == 5 || (m.unit_class == 159 && m.x[0] == 192));
     }
@@ -1257,6 +1291,30 @@ void TestScanWorld() {
   CHECK(used_memo.used_quests.empty());
   w.mem.Put32(w.act + 0x0C, 0x6C838D4A);
   w.mem.Put32(tree_obj + 0x10, 1);
+
+  // Estado da missao no cliente (QuestRecord em [0x7C0D43], U sec. 5.4): quando o bit 0
+  // da missao esta ligado, o objetivo ja aparece usado mesmo com a unidade em modo 0
+  // (ex.: altar 546 na missao 39 ou Anya 460/558 na missao 37).
+  CHECK_EQ(QuestOfObject(473, 0), 36);
+  CHECK_EQ(QuestOfObject(460, 0), 37);
+  CHECK_EQ(QuestOfObject(558, 67), 37);
+  CHECK_EQ(QuestOfObject(546, 65), 39);
+  CHECK_EQ(QuestOfObject(30, 12), 4);
+  const uint32_t qrec = w.mem.Alloc(0x08);
+  const uint32_t qbuf = w.mem.Alloc(0x60);
+  w.mem.Put32(qrec + 0x00, qbuf);
+  w.mem.Put32(qrec + 0x04, 0x60);
+  w.mem.Put16(qbuf + 37 * 2, 0x1001);  // missao 37 concluida (bit 0 = 1)
+  w.mem.Put32(w.addr.quest_flags, qrec);
+  bool qdone = false;
+  CHECK(ReadQuestCompleted(w.mem, w.addr, 37, &qdone) && qdone);
+  CHECK(ReadQuestCompleted(w.mem, w.addr, 36, &qdone) && !qdone);
+  CHECK(!ReadQuestCompleted(w.mem, w.addr, 99, &qdone));
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK_EQ(scan.stats.quests_used, 2u);  // arvore (modo 1) + Anya (missao 37 no QuestRecord)
+  const Mark* anya_done = FindMark(scan, MarkKind::kQuest, 558);
+  CHECK(anya_done != nullptr && anya_done->used);
+  w.mem.Put32(w.addr.quest_flags, 0);
 
   // Objetivos desligados; rotulo manual; classe escondida.
   ScanOptions adjusted = options;
@@ -1608,6 +1666,16 @@ void TestPassages() {
   w.mem.Put32(w.drlg_act + 0x47C, 0);
   CHECK(RevealBlockReason(w.mem, scan) != nullptr);
   w.mem.Put32(w.drlg_act + 0x47C, w.level);
+  CHECK(RevealBlockReason(w.mem, scan) == nullptr);
+  // Partida multijogador (game_type > 1): reveal_exits recusado.
+  w.mem.Put32(w.addr.game_type, 2);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK(RevealBlockReason(w.mem, scan) != nullptr);
+  w.mem.Put32(w.addr.game_type, 1);
+  ScanGame(w.mem, w.addr, options, &scan);
+  CHECK(RevealBlockReason(w.mem, scan) == nullptr);
+  w.mem.Put32(w.addr.game_type, 0);
+  ScanGame(w.mem, w.addr, options, &scan);
   CHECK(RevealBlockReason(w.mem, scan) == nullptr);
 
   // Warp que levaria a outro ato: a sala nao e escolhida (a ligacao geraria o destino).
